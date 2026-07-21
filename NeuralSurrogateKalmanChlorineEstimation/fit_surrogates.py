@@ -44,37 +44,52 @@ def fit_surrogate(net_desc: str, scada_file_in: str, control_actions_file_in: st
     mlp_state_transition_model.save_to_file(file_out)
 
 
-
-
 if __name__ == "__main__":
-    # CY-DBP
-    fit_surrogate(net_desc="CY-DBP",
-                  scada_file_in=os.path.join("data", "cydbp_randDemand=False_training.epytflow_scada_data"),
-                  control_actions_file_in=os.path.join("data", "cydbp_randDemand=False_training.npz"),
-                  file_out=os.path.join("data", "cydbp_randDemand=False_surrogate.pt"))
+    fit_surrogate(
+        net_desc="Hanoi",
+        scada_file_in=os.path.join(
+            "data",
+            "hanoi_randDemand=True_training.epytflow_scada_data"
+        ),
+        control_actions_file_in=os.path.join(
+            "data",
+            "hanoi_randDemand=True_training.npz"
+        ),
+        file_out=os.path.join(
+            "data",
+            "hanoi_randDemand=True_surrogate.pt"
+        )
+    )
 
-    fit_surrogate(net_desc="CY-DBP",
-                  scada_file_in=os.path.join("data", "cydbp_randDemand=True_training.epytflow_scada_data"),
-                  control_actions_file_in=os.path.join("data", "cydbp_randDemand=True_training.npz"),
-                  file_out=os.path.join("data", "cydbp_randDemand=True_surrogate.pt"))
-
-    # Net1
-    # fit_surrogate(net_desc="Net1",
-    #               scada_file_in=os.path.join("data", "net1_randDemand=False_training.epytflow_scada_data"),
-    #               control_actions_file_in=os.path.join("data", "net1_randDemand=False_training.npz"),
-    #               file_out=os.path.join("data", "net1_randDemand=False_surrogate.pt"))
-    #
-    # fit_surrogate(net_desc="Net1",
-    #               scada_file_in=os.path.join("data", "net1_randDemand=True_training.epytflow_scada_data"),
-    #               control_actions_file_in=os.path.join("data", "net1_randDemand=True_training.npz"),
-    #               file_out=os.path.join("data", "net1_randDemand=True_surrogate.pt"))
-    # Hanoi
-    fit_surrogate(net_desc="Hanoi",
-                  scada_file_in=os.path.join("data", "hanoi_randDemand=False_training.epytflow_scada_data"),
-                  control_actions_file_in=os.path.join("data", "hanoi_randDemand=False_training.npz"),
-                  file_out=os.path.join("data", "hanoi_randDemand=False_surrogate.pt"))
-    fit_surrogate(net_desc="Hanoi",
-                  scada_file_in=os.path.join("data", "hanoi_randDemand=True_training.epytflow_scada_data"),
-                  control_actions_file_in=os.path.join("data", "hanoi_randDemand=True_training.npz"),
-                  file_out=os.path.join("data", "hanoi_randDemand=True_surrogate.pt"))
+# if __name__ == "__main__":
+#     # CY-DBP
+#     fit_surrogate(net_desc="CY-DBP",
+#                   scada_file_in=os.path.join("data", "cydbp_randDemand=False_training.epytflow_scada_data"),
+#                   control_actions_file_in=os.path.join("data", "cydbp_randDemand=False_training.npz"),
+#                   file_out=os.path.join("data", "cydbp_randDemand=False_surrogate.pt"))
+#
+#     fit_surrogate(net_desc="CY-DBP",
+#                   scada_file_in=os.path.join("data", "cydbp_randDemand=True_training.epytflow_scada_data"),
+#                   control_actions_file_in=os.path.join("data", "cydbp_randDemand=True_training.npz"),
+#                   file_out=os.path.join("data", "cydbp_randDemand=True_surrogate.pt"))
+#
+#     # Net1
+#     # fit_surrogate(net_desc="Net1",
+#     #               scada_file_in=os.path.join("data", "net1_randDemand=False_training.epytflow_scada_data"),
+#     #               control_actions_file_in=os.path.join("data", "net1_randDemand=False_training.npz"),
+#     #               file_out=os.path.join("data", "net1_randDemand=False_surrogate.pt"))
+#     #
+#     # fit_surrogate(net_desc="Net1",
+#     #               scada_file_in=os.path.join("data", "net1_randDemand=True_training.epytflow_scada_data"),
+#     #               control_actions_file_in=os.path.join("data", "net1_randDemand=True_training.npz"),
+#     #               file_out=os.path.join("data", "net1_randDemand=True_surrogate.pt"))
+#     # Hanoi
+#     fit_surrogate(net_desc="Hanoi",
+#                   scada_file_in=os.path.join("data", "hanoi_randDemand=False_training.epytflow_scada_data"),
+#                   control_actions_file_in=os.path.join("data", "hanoi_randDemand=False_training.npz"),
+#                   file_out=os.path.join("data", "hanoi_randDemand=False_surrogate.pt"))
+#     fit_surrogate(net_desc="Hanoi",
+#                   scada_file_in=os.path.join("data", "hanoi_randDemand=True_training.epytflow_scada_data"),
+#                   control_actions_file_in=os.path.join("data", "hanoi_randDemand=True_training.npz"),
+#                   file_out=os.path.join("data", "hanoi_randDemand=True_surrogate.pt"))
 
