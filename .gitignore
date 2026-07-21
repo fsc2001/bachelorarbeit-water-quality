@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+
+# PyCharm
+.idea/
+
+# Große erzeugte Dateien
+*.epytflow_scada_data
+*.pt
+*.rpt
+
+# Temporäre Test-/Runtime-Dateien
+*_runtime.inp
+*_short_pattern.inp
+
+# Backup des alten Referenz-Git-Repositories
+NeuralSurrogateKalmanChlorineEstimation/.git_reference_backup/
+
+# Optional: erzeugte NumPy-Datensätze
+*.npz

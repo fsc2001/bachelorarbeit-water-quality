@@ -1,0 +1,36 @@
+cff-version: "1.2.0"
+authors:
+- family-names: Artelt
+  given-names: André
+  orcid: "https://orcid.org/0000-0002-2426-3126"
+- family-names: Strotherm
+  given-names: Janine
+  orcid: "0009-0005-7013-5167"
+- family-names: Hermes
+  given-names: Luca
+  orcid: "0000-0002-7568-7981"
+- family-names: Hammer
+  given-names: Barbara
+  orcid: "https://orcid.org/0000-0002-0935-5591"
+contact:
+- family-names: Artelt
+  given-names: André
+  orcid: "https://orcid.org/0000-0002-2426-3126"
+message: If you use this material, please cite our paper published in the SysTol 2025 proceedings.
+preferred-citation:
+  authors:
+- family-names: Artelt
+  given-names: André
+  orcid: "https://orcid.org/0000-0002-2426-3126"
+- family-names: Strotherm
+  given-names: Janine
+  orcid: "0009-0005-7013-5167"
+- family-names: Hermes
+  given-names: Luca
+  orcid: "0000-0002-7568-7981"
+- family-names: Hammer
+  given-names: Barbara
+  orcid: "https://orcid.org/0000-0002-0935-5591"
+
+  title: "Neural Surrogate Model in an Extended Kalman Filter for Chlorine Concentration State Estimation in Water Distribution Systems"
+title: "Neural Surrogate Model in an Extended Kalman Filter for Chlorine Concentration State Estimation in Water Distribution Systems"
