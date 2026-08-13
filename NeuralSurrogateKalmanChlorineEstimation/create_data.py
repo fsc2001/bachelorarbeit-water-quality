@@ -15,7 +15,68 @@ from epyt_control.envs.actions import ChemicalInjectionAction
 
 
 path_to_scenarios = "data"
+def repair_exported_inp(inp_path: str) -> None:
+    with open(inp_path, "r", encoding="utf-8") as file:
+        lines = file.readlines()
 
+    cleaned_lines = []
+    report_block = []
+
+    inside_report = False
+    reactions_seen = 0
+
+    for line in lines:
+        stripped = line.strip().upper()
+
+        # REPORT-Block merken, aber an dieser falschen Stelle entfernen
+        if stripped == "[REPORT]":
+            inside_report = True
+            report_block = [line]
+            continue
+
+        if inside_report:
+            # Das erste [END] gehört zum falsch platzierten REPORT-Block
+            if stripped == "[END]":
+                inside_report = False
+            else:
+                report_block.append(line)
+
+            continue
+
+        # Alle vorhandenen END-Header entfernen.
+        # Am Ende wird genau einer neu eingefügt.
+        if stripped == "[END]":
+            continue
+
+        # Falls der Export wieder einen doppelten REACTIONS-Header erzeugt
+        if stripped == "[REACTIONS]":
+            reactions_seen += 1
+
+            if reactions_seen > 1:
+                continue
+
+        cleaned_lines.append(line)
+
+    # Leerzeilen am Dateiende entfernen
+    while cleaned_lines and not cleaned_lines[-1].strip():
+        cleaned_lines.pop()
+
+    cleaned_lines.append("\n")
+
+    # REPORT-Block korrekt ans Dateiende verschieben
+    if report_block:
+        cleaned_lines.extend(report_block)
+
+        if cleaned_lines[-1].strip():
+            cleaned_lines.append("\n")
+
+    # Es darf genau ein END geben
+    cleaned_lines.append("[END]\n")
+
+    with open(inp_path, "w", encoding="utf-8") as file:
+        file.writelines(cleaned_lines)
+
+    print("INP repariert: REPORT verschoben und vorzeitiges END entfernt")
 
 def create_leakdb_scenario(use_net1: bool = False, randomized_demands: bool = False) -> None:
     # Create scenarios based on the LeakDB Hanoi
@@ -39,8 +100,8 @@ def create_leakdb_scenario(use_net1: bool = False, randomized_demands: bool = Fa
         for node_idx in sim.epanet_api.get_all_nodes_idx():
             sim.epanet_api.set_node_init_quality(node_idx, 0)
         for link_idx in sim.epanet_api.get_all_links_idx():
-            sim.epanet_api.setlinkvalue(link_idx, EpanetConstants.EN_BULKORDER, -.5)
-            sim.epanet_api.setlinkvalue(link_idx, EpanetConstants.EN_WALLORDER, -.01)
+            sim.epanet_api.setlinkvalue(link_idx, EpanetConstants.EN_KBULK, -0.5)
+            sim.epanet_api.setlinkvalue(link_idx, EpanetConstants.EN_KWALL, -0.01)
 
         # Set flow and chlorine sensors everywhere
         sim.sensor_config = SensorConfig.create_empty_sensor_config(sim.sensor_config)
@@ -59,10 +120,33 @@ def create_leakdb_scenario(use_net1: bool = False, randomized_demands: bool = Fa
 
         # Export scenario
         Path(path_to_scenarios).mkdir(exist_ok=True)
-        sim.save_to_epanet_file(os.path.join(path_to_scenarios, f"control_cl_injection_scenario-Net1={use_net1}_randDemand={randomized_demands}.inp"))
-        sim.get_scenario_config().save_to_file(os.path.join(path_to_scenarios, f"control_cl_injection_scenario-Net1={use_net1}_randDemand={randomized_demands}"))
 
+        scenario_name = (
+            f"control_cl_injection_scenario-"
+            f"Net1={use_net1}_randDemand={randomized_demands}"
+        )
 
+        inp_path = os.path.abspath(
+            os.path.join(path_to_scenarios, f"{scenario_name}.inp")
+        )
+
+        config_path = os.path.abspath(
+            os.path.join(path_to_scenarios, scenario_name)
+        )
+
+        # Verändertes Netz speichern
+        sim.save_to_epanet_file(inp_path)
+        repair_exported_inp(inp_path)
+        # Bestehende Config übernehmen, aber auf die neue INP-Datei zeigen lassen
+        scenario_config = ScenarioConfig(
+            scenario_config=sim.get_scenario_config(),
+            f_inp_in=inp_path,
+        )
+
+        scenario_config.save_to_file(config_path)
+
+        print("Gespeicherte INP:", inp_path)
+        print("Config verweist auf:", scenario_config.f_inp_in)
 class LeakdDbChlorineInjectionEnv(HydraulicControlEnv):
         def __init__(self, use_net1: bool = False, randomized_demands: bool = False):
             # Load scenario and set autoreset=True
@@ -88,6 +172,7 @@ def create_data_set(use_net1: bool, randomized_demands: bool, file_out: str, pat
     scada_data = None
     control_actions = []
     with LeakdDbChlorineInjectionEnv(use_net1, randomized_demands) as env:
+        print("Environment verwendet:", env._scenario_config.f_inp_in)
         env.reset()
         for _ in range(1000):
             action = env.action_space.sample()

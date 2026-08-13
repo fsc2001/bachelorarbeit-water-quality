@@ -291,6 +291,7 @@ if __name__ == "__main__":
         config,
         n_sensors
     ) as env:
+        print("Verwendete INP:", env._scenario_config.f_inp_in)
         obs, info = env.reset()
 
         api = env._scenario_sim.epanet_api
