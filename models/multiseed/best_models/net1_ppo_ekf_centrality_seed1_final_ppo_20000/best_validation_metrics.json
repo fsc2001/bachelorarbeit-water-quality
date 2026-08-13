@@ -1,0 +1,14 @@
+{
+  "training_timesteps": 20000,
+  "score": 0.85905578856594,
+  "mean_reward": -0.8590557889342308,
+  "mean_action": 0.5252800910735969,
+  "cumulative_action": 262.6400455367984,
+  "outside_range_fraction": 0.4889090909090909,
+  "lower_violation_fraction": 0.48363636363636364,
+  "upper_violation_fraction": 0.005272727272727273,
+  "mean_violation_per_node_value": 0.07761845342320037,
+  "cumulative_total_violation": 426.901493827602,
+  "minimum_node_chlorine": 0.0,
+  "maximum_node_chlorine": 2.458542346954346
+}

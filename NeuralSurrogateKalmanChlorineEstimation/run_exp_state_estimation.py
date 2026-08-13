@@ -187,11 +187,21 @@ def run_state_estimation(net_desc: str, scada_file_in: str, control_actions_file
         cur_state_pred, cov_state_pred = my_filter.step(x_observation)
         cur_state_pred_ = np.concatenate((cur_state_pred.reshape(1, -1), np.zeros((1, X_control.shape[1]))), axis=1)
         cur_state_pred = state_transition_model._scaler.inverse_transform(cur_state_pred_).flatten()[:cur_state_pred.shape[0]]  # Undo scaling
-        
-        cov_state_pred = np.diag(cov_state_pred)
-        cov_state_pred_ = np.concatenate((cov_state_pred.reshape(1, -1), np.zeros((1, X_control.shape[1]))), axis=1)
-        cov_state_pred = state_transition_model._scaler.inverse_transform(cov_state_pred_).flatten()[:cur_state_pred.shape[0]]
-        std_state_pred = np.sqrt(cov_state_pred)
+
+        scaled_variance = np.diag(cov_state_pred)
+
+        scaled_variance = np.clip(
+            scaled_variance,
+            a_min=0.0,
+            a_max=None
+        )
+
+        state_scales = state_transition_model._scaler.scale_[
+                       :cur_state_pred.shape[0]
+                       ]
+
+        physical_variance = scaled_variance * (state_scales ** 2)
+        std_state_pred = np.sqrt(physical_variance)
 
         # Evaluate (only Cl concentration states)
         cur_state = X_cur_state[i, :]

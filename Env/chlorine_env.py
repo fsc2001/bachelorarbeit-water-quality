@@ -1,16 +1,30 @@
-import os
 import random
+from typing import Optional
+
 import numpy as np
 import sys
 from pathlib import Path
+from epyt_flow.uncertainty import ModelUncertainty
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.append(str(ROOT / "NeuralSurrogateKalmanChlorineEstimation"))
-DATA_PATH = ROOT / "NeuralSurrogateKalmanChlorineEstimation" / "data"
+REFERENCE_REPO = (
+    ROOT / "NeuralSurrogateKalmanChlorineEstimation"
+)
 
+# Für Imports wie: from Env.network_config import ...
+sys.path.insert(0, str(ROOT))
+
+# Für Imports aus dem verschachtelten Referenzprojekt,
+# z. B. run_exp_state_estimation
+sys.path.insert(0, str(REFERENCE_REPO))
+
+DATA_PATH = REFERENCE_REPO / "data"
+from Env.network_config import (
+    NETWORKS,
+    NetworkConfig,
+)
 from epyt_flow.simulation import EpanetConstants, ScenarioConfig, ScadaData
 from epyt_control.envs import EpanetControlEnv
-from epanet_plus import EPyT
 from epyt_control.envs.actions import ChemicalInjectionAction
 from epyt_control.signal_processing.state_estimation import TimeVaryingExtendedKalmanFilter
 from run_exp_state_estimation import (
@@ -19,91 +33,214 @@ from run_exp_state_estimation import (
 )
 
 
-PRESSURES_START = 0
-PRESSURES_END = 32
+SENSOR_SEED = 0
 
-FLOWS_START = 32
-FLOWS_END = 66
+def create_fixed_sensor_placement(
+    node_indices,
+    link_indices,
+    n_nodes,
+    n_links,
+    state_dim,
+):
+    node_indices = sorted(node_indices)
+    link_indices = sorted(link_indices)
 
-DEMANDS_START = 66
-DEMANDS_END = 98
+    if len(set(node_indices)) != len(node_indices):
+        raise ValueError("Duplicate node sensor indices.")
 
-CL_NODES_START = 98
-CL_NODES_END = 130
+    if len(set(link_indices)) != len(link_indices):
+        raise ValueError("Duplicate link sensor indices.")
 
-CL_LINKS_START = 130
-CL_LINKS_END = 164
+    if not all(0 <= i < n_nodes for i in node_indices):
+        raise ValueError("Invalid node sensor index.")
 
-INJECTION_NODE_ID = "1"
-INJECTION_PATTERN_ID = "my-chl-injection"
+    if not all(0 <= i < n_links for i in link_indices):
+        raise ValueError("Invalid link sensor index.")
 
-N_NODES = CL_NODES_END - CL_NODES_START   # 32
-N_LINKS = CL_LINKS_END - CL_LINKS_START   # 34
-N_CL_ITEMS = N_NODES + N_LINKS            # 66
+    M = np.zeros(
+        (
+            len(node_indices)
+            + 2 * len(link_indices),
+            state_dim,
+        )
+    )
 
-def create_hanoi_scenario(n_sensors: int = 3):
+    flows_idx = []
+
+    i = 0
+
+    for idx in node_indices:
+        M[i, idx] = 1
+        i += 1
+
+    for idx in link_indices:
+        M[i, n_nodes + idx] = 1
+        i += 1
+
+    for idx in link_indices:
+        flow_idx = (
+            n_nodes
+            + n_links
+            + idx
+        )
+
+        flows_idx.append(flow_idx)
+        M[i, flow_idx] = 1
+        i += 1
+
+    return M, flows_idx
+
+def create_network_scenario(
+    network_config: NetworkConfig,
+    n_sensors: int = 3,
+    split: Optional[str] = None,
+    uncertainty_seed: Optional[int] = None,
+):
+    scenario_stem = (
+        network_config.get_scenario_stem(
+            split=split
+        )
+    )
+
     config = ScenarioConfig.load_from_file(
         DATA_PATH
-        / (
-            "control_cl_injection_scenario-"
-            "Net1=False_randDemand=True."
-            "epytflow_scenario_config"
-        )
+        / f"{scenario_stem}.epytflow_scenario_config"
     )
 
     config._ScenarioConfig__f_inp_in = str(
         DATA_PATH
-        / (
-            "control_cl_injection_scenario-"
-            "Net1=False_randDemand=True.inp"
-        )
+        / f"{scenario_stem}.inp"
     )
+
+    if uncertainty_seed is not None:
+        model_uncertainty = (
+            config.model_uncertainty
+        )
+
+        if model_uncertainty is not None:
+            uncertainty_args = (
+                model_uncertainty.get_attributes()
+            )
+
+            uncertainty_args["seed"] = int(
+                uncertainty_seed
+            )
+
+            seeded_model_uncertainty = (
+                ModelUncertainty(
+                    **uncertainty_args
+                )
+            )
+
+            # ScenarioConfig besitzt dafür keinen
+            # öffentlichen Setter. Daher erzeugen
+            # wir sauber eine neue Config auf Basis
+            # der vorhandenen Config.
+            config = ScenarioConfig(
+                scenario_config=config,
+                model_uncertainty=(
+                    seeded_model_uncertainty
+                ),
+            )
 
     return config, n_sensors
 
+def create_hanoi_scenario(
+    n_sensors: int = 3,
+):
+    return create_network_scenario(
+        network_config=NETWORKS["hanoi"],
+        n_sensors=n_sensors,
+    )
 
 class ChlorineControlEnv(EpanetControlEnv):
-    def __init__(self, scenario_config: ScenarioConfig, n_sensors: int = 3):
+    def __init__(
+            self,
+            scenario_config: ScenarioConfig,
+            network_config: NetworkConfig,
+            n_sensors: int = 3,
+            use_estimated_state: bool = True,
+            chlorine_penalty_weight: float = 0.01,
+            sensor_node_indices=None,
+            sensor_link_indices=None,
+    ):
+        self._network = network_config
         self._n_sensors = n_sensors
+        self._use_estimated_state = use_estimated_state
+        self._chlorine_penalty_weight = chlorine_penalty_weight
+
+        if (
+                (sensor_node_indices is None)
+                != (sensor_link_indices is None)
+        ):
+            raise ValueError(
+                "Node and link sensor indices must "
+                "either both be provided or both be None."
+            )
+
+        self._sensor_node_indices = sensor_node_indices
+        self._sensor_link_indices = sensor_link_indices
+
         self._sparse_node_indices = None
         self._kalman = None
         self._surrogate = None
-        self._last_action = np.array([[0.]])
+        self._last_action = np.array(
+            [[0.0]],
+            dtype=np.float64,
+        )
 
         super().__init__(
             scenario_config=scenario_config,
             chemical_injection_actions=[
                 ChemicalInjectionAction(
-                    node_id=INJECTION_NODE_ID,
-                    pattern_id=INJECTION_PATTERN_ID,
+                    node_id=self._network.injection_node_id,
+                    pattern_id=self._network.injection_pattern_id,
                     source_type_id=EpanetConstants.EN_CONCEN,
                     upper_bound=5.0,
                 )
             ],
             autoreset=True,
+            reload_scenario_when_reset=False,
         )
+
+        # Im Hanoi-Netz kann der Demand eines Einspeiseknotens
+        # negativ sein.
+        self.observation_space.low[
+            self._network.demand_slice
+        ] = -np.inf
+
 
     def _init_kalman(self, obs: np.ndarray) -> None:
         self._surrogate = get_state_transition_model(
-            "Hanoi",
-            str(DATA_PATH / "hanoi_randDemand=True_surrogate.pt")
+            self._network.model_name,
+            str(
+                DATA_PATH
+                / self._network.surrogate_filename
+            ),
         )
 
-        # 32 Knotenqualitäten + 34 Linkqualitäten = 66 Chlorzustände
-        self._surrogate.n_missing_flows = N_CL_ITEMS
+        self._surrogate.n_missing_flows = (
+                self._network.n_nodes
+                + self._network.n_links
+        )
+
         self._surrogate._normalize_input_output = False
 
-        cl_nodes = obs[CL_NODES_START:CL_NODES_END]
-        cl_links = obs[CL_LINKS_START:CL_LINKS_END]
-        flows = obs[FLOWS_START:FLOWS_END]
+        cl_nodes = obs[
+            self._network.node_chlorine_slice
+        ]
+        cl_links = obs[
+            self._network.link_chlorine_slice
+        ]
+        flows = obs[
+            self._network.flow_slice
+        ]
 
         raw_state = np.concatenate((cl_nodes, cl_links, flows))
-        state_dim = raw_state.shape[0]  # 32 + 34 + 34 = 100
+        state_dim = raw_state.shape[0]
 
         self._state_dim = state_dim
 
-        # Der Scaler wurde auf Zustand + Control-Action trainiert:
-        # 100 Zustandswerte + 1 Aktuator = 101 Werte.
         scaler_input = np.concatenate(
             (
                 raw_state.reshape(1, -1),
@@ -116,15 +253,43 @@ class ChlorineControlEnv(EpanetControlEnv):
             scaler_input
         )[0, :state_dim]
 
-        # Wie in der Referenzimplementierung:
-        # n_sensors Knotensensoren und n_sensors Linksensoren.
-        self._M, self._flows_idx = create_random_sensor_placement(
-            self._n_sensors,
-            self._n_sensors,
-            N_NODES,
-            N_LINKS,
-            state_dim
-        )
+        if self._sensor_node_indices is not None:
+
+            self._M, self._flows_idx = (
+                create_fixed_sensor_placement(
+                    node_indices=self._sensor_node_indices,
+                    link_indices=self._sensor_link_indices,
+                    n_nodes=self._network.n_nodes,
+                    n_links=self._network.n_links,
+                    state_dim=state_dim,
+                )
+            )
+
+        else:
+            # Fallback für alte Experimente:
+            # gleiche Random-Logik wie bisher.
+            python_random_state = random.getstate()
+            numpy_random_state = np.random.get_state()
+
+            try:
+                random.seed(SENSOR_SEED)
+                np.random.seed(SENSOR_SEED)
+
+                self._M, self._flows_idx = (
+                    create_random_sensor_placement(
+                        self._n_sensors,
+                        self._n_sensors,
+                        self._network.n_nodes,
+                        self._network.n_links,
+                        state_dim,
+                    )
+                )
+
+            finally:
+                random.setstate(python_random_state)
+                np.random.set_state(
+                    numpy_random_state
+                )
 
         obs_dim = self._M.shape[0]
 
@@ -172,6 +337,24 @@ class ChlorineControlEnv(EpanetControlEnv):
             get_measurement_func_grad=lambda _t: measurement_func_grad,
         )
 
+    def _prepare_observation(
+            self,
+            obs: np.ndarray,
+    ) -> np.ndarray:
+        obs = np.asarray(
+            obs,
+            dtype=np.float32,
+        ).copy()
+
+        chlorine_slice = self._network.chlorine_slice
+
+        obs[chlorine_slice] = np.maximum(
+            obs[chlorine_slice],
+            0.0,
+        )
+
+        return obs
+
     def _inverse_scale_state(self, scaled_state: np.ndarray) -> np.ndarray:
         # Der Scaler erwartet wieder 100 Zustände + 1 Control-Wert.
         scaler_input = np.concatenate(
@@ -189,15 +372,18 @@ class ChlorineControlEnv(EpanetControlEnv):
     def reset(self, **kwargs):
         self._last_action = np.zeros(
             (1, 1),
-            dtype=np.float64
+            dtype=np.float64,
         )
 
         obs, info = super().reset(**kwargs)
 
-        # Das Szenario wurde von super().reset() neu geladen.
-        # Jetzt fehlendes Pattern und Source reparieren,
-        # bevor die erste Action ausgeführt wird.
+        # Oracle-Variante:
+        # Der Agent erhält direkt die vollständige
+        # Simulatorbeobachtung.
+        if not self._use_estimated_state:
+            return self._prepare_observation(obs), info
 
+        # EKF-Variante:
         self._init_kalman(obs)
 
         initial_estimate = self._inverse_scale_state(
@@ -205,29 +391,70 @@ class ChlorineControlEnv(EpanetControlEnv):
         )
 
         pressures = obs[
-                    PRESSURES_START:PRESSURES_END
-                    ]
-        demands = obs[
-                  DEMANDS_START:DEMANDS_END
-                  ]
+            self._network.pressure_slice
+        ]
 
-        return np.concatenate(
+        demands = obs[
+            self._network.demand_slice
+        ]
+
+        estimated_node_chlorine = initial_estimate[
+            self._network.state_node_chlorine_slice
+        ]
+
+        estimated_link_chlorine = initial_estimate[
+            self._network.state_link_chlorine_slice
+        ]
+
+        estimated_flows = initial_estimate[
+            self._network.state_flow_slice
+        ]
+
+        new_obs = np.concatenate(
             (
                 pressures,
+                estimated_flows,
                 demands,
-                initial_estimate
+                estimated_node_chlorine,
+                estimated_link_chlorine,
             )
-        ), info
+        )
+
+        return self._prepare_observation(new_obs), info
 
     def step(self, action: np.ndarray):
-        self._last_action = action.reshape(1, -1)
-        obs, reward, terminated, truncated, info = super().step(action)
-        return self._kalman_obs(obs), reward, terminated, truncated, info
+        self._last_action = np.asarray(
+            action,
+            dtype=np.float64,
+        ).reshape(1, -1)
+
+        obs, reward, terminated, truncated, info = (
+            super().step(action)
+        )
+
+        info["physical_chlorine_action"] = float(
+            self._last_action.reshape(-1)[0]
+        )
+
+        if self._use_estimated_state:
+            agent_obs = self._kalman_obs(obs)
+        else:
+            agent_obs = self._prepare_observation(obs)
+
+        return agent_obs, reward, terminated, truncated, info
 
     def _kalman_obs(self, obs: np.ndarray) -> np.ndarray:
-        cl_nodes = obs[CL_NODES_START:CL_NODES_END]
-        cl_links = obs[CL_LINKS_START:CL_LINKS_END]
-        flows = obs[FLOWS_START:FLOWS_END]
+        cl_nodes = obs[
+            self._network.node_chlorine_slice
+        ]
+
+        cl_links = obs[
+            self._network.link_chlorine_slice
+        ]
+
+        flows = obs[
+            self._network.flow_slice
+        ]
 
         raw_state = np.concatenate((cl_nodes, cl_links, flows))
 
@@ -256,55 +483,114 @@ class ChlorineControlEnv(EpanetControlEnv):
         # EKF arbeitet skaliert; der RL-Agent erhält reale Einheiten.
         state_estimate = self._inverse_scale_state(scaled_estimate)
 
-        pressures = obs[PRESSURES_START:PRESSURES_END]
-        demands = obs[DEMANDS_START:DEMANDS_END]
+        pressures = obs[
+            self._network.pressure_slice
+        ]
 
-        return np.concatenate((pressures, demands, state_estimate))
+        demands = obs[
+            self._network.demand_slice
+        ]
 
-    def _compute_reward_function(self, scada_data: ScadaData) -> float:
+        estimated_node_chlorine = state_estimate[
+            self._network.state_node_chlorine_slice
+        ]
+
+        estimated_link_chlorine = state_estimate[
+            self._network.state_link_chlorine_slice
+        ]
+
+        estimated_flows = state_estimate[
+            self._network.state_flow_slice
+        ]
+
+        new_obs = np.concatenate(
+            (
+                pressures,
+                estimated_flows,
+                demands,
+                estimated_node_chlorine,
+                estimated_link_chlorine,
+            )
+        )
+
+        return self._prepare_observation(new_obs)
+
+    def _compute_reward_function(
+            self,
+            scada_data: ScadaData,
+    ) -> float:
         lower_cl_bound = 0.3
         upper_cl_bound = 2.0
 
         nodes_quality = np.asarray(
-            scada_data.get_data_nodes_quality()
+            scada_data.get_data_nodes_quality(),
+            dtype=np.float64,
         )
 
         upper_violation = np.maximum(
             nodes_quality - upper_cl_bound,
-            0.0
+            0.0,
         )
 
         lower_violation = np.maximum(
             lower_cl_bound - nodes_quality,
-            0.0
+            0.0,
         )
 
-        violation_penalty = np.sum(upper_violation) + np.sum(lower_violation)
+        violation_penalty = (
+                np.sum(upper_violation)
+                + np.sum(lower_violation)
+        )
 
-        return -float(violation_penalty)
+        chlorine_action = float(
+            self._last_action.flatten()[0]
+        )
+
+        chlorine_usage_penalty = (
+                self._chlorine_penalty_weight
+                * chlorine_action
+        )
+
+        total_penalty = (
+                violation_penalty
+                + chlorine_usage_penalty
+        )
+
+        return -float(total_penalty)
 
 
 if __name__ == "__main__":
-    config, n_sensors = create_hanoi_scenario(3)
+    network = NETWORKS["cydbp"]
+
+    config, n_sensors = create_network_scenario(
+        network_config=network,
+        n_sensors=10,
+    )
 
     with ChlorineControlEnv(
-        config,
-        n_sensors
+        scenario_config=config,
+        network_config=network,
+        n_sensors=n_sensors,
+        use_estimated_state=True,
     ) as env:
         print("Verwendete INP:", env._scenario_config.f_inp_in)
         obs, info = env.reset()
 
-        api = env._scenario_sim.epanet_api
-        node_idx = api.get_node_idx(
-            INJECTION_NODE_ID
+        print(
+            "Observation finite:",
+            np.all(np.isfinite(obs)),
         )
 
-        print("Quality:", api.getqualinfo())
+        api = env._scenario_sim.epanet_api
+
+        node_idx = api.get_node_idx(
+            network.injection_node_id
+        )
 
         print(
             "Pattern-Index:",
             api.getpatternindex(
-                INJECTION_PATTERN_ID
+                network.injection_pattern_id
             )
         )
 
@@ -316,26 +602,55 @@ if __name__ == "__main__":
             )
         )
 
-        for step_idx in range(10):
-            action = np.array(
-                [5.0],
-                dtype=np.float32
+        print(
+            "SourceType:",
+            api.getnodevalue(
+                node_idx,
+                EpanetConstants.EN_SOURCETYPE
+            )
+        )
+
+        print(
+            "SourceQuality:",
+            api.getnodevalue(
+                node_idx,
+                EpanetConstants.EN_SOURCEQUAL
+            )
+        )
+
+        print("Observation shape:", obs.shape)
+        print("Injection node index:", node_idx)
+        print("Quality:", api.getqualinfo())
+
+        print(
+            "Pattern-Index:",
+            api.getpatternindex(
+                network.injection_pattern_id
+            )
+        )
+
+        for step in range(10):
+            obs, reward, terminated, truncated, info = (
+                env.step(
+                    np.array([5.0], dtype=np.float32)
+                )
             )
 
-            obs, reward, terminated, truncated, info = (
-                env.step(action)
-            )
+            if not np.all(np.isfinite(obs)):
+                raise RuntimeError(
+                    f"Nicht-endliche Beobachtung "
+                    f"in Schritt {step + 1}"
+                )
 
             node_quality = np.asarray(
-                info["scada_data"].get_data_nodes_quality()
-            )
+                info[
+                    "scada_data"
+                ].get_data_nodes_quality()
+            ).reshape(-1)
 
             print(
-                f"Schritt {step_idx + 1}: "
+                f"Schritt {step + 1}: "
                 f"Reward={reward:.4f}, "
                 f"Cl min={node_quality.min():.4f}, "
                 f"Cl max={node_quality.max():.4f}"
             )
-
-            if terminated or truncated:
-                break
