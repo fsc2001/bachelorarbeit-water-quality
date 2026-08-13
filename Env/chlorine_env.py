@@ -573,6 +573,7 @@ if __name__ == "__main__":
         n_sensors=n_sensors,
         use_estimated_state=True,
     ) as env:
+        print("Verwendete INP:", env._scenario_config.f_inp_in)
         obs, info = env.reset()
 
         print(
