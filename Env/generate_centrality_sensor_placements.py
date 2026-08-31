@@ -1,20 +1,23 @@
+"""
+This module generates centrality-based sensor placements for all networks.
+"""
+
 import json
 import sys
 from pathlib import Path
 
 import networkx as nx
+from epyt_flow.simulation.scada import ScadaData
 
 
-ROOT = Path(__file__).resolve().parents[1]
-REPO = ROOT / "NeuralSurrogateKalmanChlorineEstimation"
-DATA_DIR = REPO / "data"
-RESULT_DIR = ROOT / "results"
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+REFERENCE_REPO = PROJECT_DIR / "NeuralSurrogateKalmanChlorineEstimation"
+DATA_DIR = REFERENCE_REPO / "data"
+RESULTS_DIR = PROJECT_DIR / "results"
 
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(REPO))
+sys.path.insert(0, str(PROJECT_DIR))
 
 from Env.network_config import NETWORKS
-from epyt_flow.simulation.scada import ScadaData
 
 
 SENSOR_COUNTS = {
@@ -28,108 +31,62 @@ def compute_placement(network_name):
     network = NETWORKS[network_name]
     n_sensors = SENSOR_COUNTS[network_name]
 
-    # We only need the network topology.
-    # Use training rather than test data for cleaner methodology.
     scada_path = (
         DATA_DIR
         / f"{network_name}_randDemand=True_training.epytflow_scada_data"
     )
 
-    scada = ScadaData.load_from_file(
-        str(scada_path)
-    )
+    scada_data = ScadaData.load_from_file(str(scada_path))
+    topology = scada_data.network_topo
 
-    topo = scada.network_topo
+    node_records = topology.get_all_nodes()
+    link_records = topology.get_all_links()
 
-    # --------------------------------------------------------
-    # Ordered physical IDs
-    # --------------------------------------------------------
-
-    node_records = topo.get_all_nodes()
-    link_records = topo.get_all_links()
-
-    # get_all_nodes():
-    # ['10', '11', ...]
-    node_ids = [
-        str(node_id)
-        for node_id in node_records
-    ]
-
-    # get_all_links():
-    # [('10', ['10', '11']), ...]
-    link_ids = [
-        str(record[0])
-        for record in link_records
-    ]
+    node_ids = [str(node_id) for node_id in node_records]
+    link_ids = [str(link[0]) for link in link_records]
 
     if len(node_ids) != network.n_nodes:
         raise RuntimeError(
-            f"{network_name}: expected "
-            f"{network.n_nodes} nodes, "
-            f"got {len(node_ids)}"
+            f"{network_name}: expected {network.n_nodes} nodes, "
+            f"got {len(node_ids)}."
         )
 
     if len(link_ids) != network.n_links:
         raise RuntimeError(
-            f"{network_name}: expected "
-            f"{network.n_links} links, "
-            f"got {len(link_ids)}"
+            f"{network_name}: expected {network.n_links} links, "
+            f"got {len(link_ids)}."
         )
 
-    if len(set(node_ids)) != len(node_ids):
-        raise RuntimeError(
-            f"{network_name}: duplicate node IDs"
-        )
-
-    if len(set(link_ids)) != len(link_ids):
-        raise RuntimeError(
-            f"{network_name}: duplicate link IDs"
-        )
-
-    node_index = {
-        node_id: idx
-        for idx, node_id in enumerate(node_ids)
+    node_indices = {
+        node_id: index
+        for index, node_id in enumerate(node_ids)
     }
 
-    link_index = {
-        link_id: idx
-        for idx, link_id in enumerate(link_ids)
+    link_indices = {
+        link_id: index
+        for index, link_id in enumerate(link_ids)
     }
 
-    # --------------------------------------------------------
-    # Build topology graph
-    # --------------------------------------------------------
-
-    # MultiGraph is necessary because CY-DBP contains
-    # parallel physical links.
     graph = nx.MultiGraph()
-
     graph.add_nodes_from(node_ids)
 
     for link_id, endpoints in link_records:
-        link_id = str(link_id)
-
         if len(endpoints) != 2:
             raise RuntimeError(
-                f"{network_name}: unexpected endpoints "
-                f"for {link_id}: {endpoints}"
+                f"Unexpected endpoints for link {link_id}: {endpoints}"
             )
 
-        u = str(endpoints[0])
-        v = str(endpoints[1])
+        start_node = str(endpoints[0])
+        end_node = str(endpoints[1])
+        link_id = str(link_id)
 
         graph.add_edge(
-            u,
-            v,
+            start_node,
+            end_node,
             key=link_id,
-            link_id=link_id,
         )
 
-    # --------------------------------------------------------
-    # Node betweenness centrality
-    # --------------------------------------------------------
-
-    node_scores = nx.betweenness_centrality(
+    node_centrality = nx.betweenness_centrality(
         graph,
         normalized=True,
         weight=None,
@@ -138,231 +95,93 @@ def compute_placement(network_name):
     ranked_nodes = sorted(
         node_ids,
         key=lambda node_id: (
-            -node_scores[node_id],
-            node_index[node_id],
+            -node_centrality[node_id],
+            node_indices[node_id],
         ),
     )
 
-    selected_node_ids_ranked = (
-        ranked_nodes[:n_sensors]
-    )
+    selected_node_ids = ranked_nodes[:n_sensors]
 
     selected_node_indices = sorted(
-        node_index[node_id]
-        for node_id
-        in selected_node_ids_ranked
+        node_indices[node_id]
+        for node_id in selected_node_ids
     )
 
-    # --------------------------------------------------------
-    # Edge betweenness centrality
-    # --------------------------------------------------------
-
-    raw_edge_scores = (
-        nx.edge_betweenness_centrality(
-            graph,
-            normalized=True,
-            weight=None,
-        )
+    raw_edge_centrality = nx.edge_betweenness_centrality(
+        graph,
+        normalized=True,
+        weight=None,
     )
 
-    edge_scores = {}
-
-    for edge, score in raw_edge_scores.items():
-
-        # MultiGraph:
-        # (u, v, key)
-        if len(edge) != 3:
-            raise RuntimeError(
-                f"Unexpected edge key: {edge}"
-            )
-
-        link_id = str(edge[2])
-
-        edge_scores[link_id] = float(score)
-
-    missing_links = (
-        set(link_ids)
-        - set(edge_scores.keys())
-    )
-
-    if missing_links:
-        raise RuntimeError(
-            f"{network_name}: links missing from "
-            f"centrality calculation: "
-            f"{sorted(missing_links)}"
-        )
+    link_centrality = {
+        str(edge[2]): float(score)
+        for edge, score in raw_edge_centrality.items()
+    }
 
     ranked_links = sorted(
         link_ids,
         key=lambda link_id: (
-            -edge_scores[link_id],
-            link_index[link_id],
+            -link_centrality[link_id],
+            link_indices[link_id],
         ),
     )
 
-    selected_link_ids_ranked = (
-        ranked_links[:n_sensors]
-    )
+    selected_link_ids = ranked_links[:n_sensors]
 
     selected_link_indices = sorted(
-        link_index[link_id]
-        for link_id
-        in selected_link_ids_ranked
+        link_indices[link_id]
+        for link_id in selected_link_ids
     )
-
-    # --------------------------------------------------------
-    # Final sanity checks
-    # --------------------------------------------------------
-
-    if (
-        len(selected_node_indices)
-        != n_sensors
-    ):
-        raise RuntimeError(
-            "Wrong number of node sensors"
-        )
-
-    if (
-        len(set(selected_node_indices))
-        != n_sensors
-    ):
-        raise RuntimeError(
-            "Duplicate node sensor indices"
-        )
-
-    if (
-        len(selected_link_indices)
-        != n_sensors
-    ):
-        raise RuntimeError(
-            "Wrong number of link sensors"
-        )
-
-    if (
-        len(set(selected_link_indices))
-        != n_sensors
-    ):
-        raise RuntimeError(
-            "Duplicate link sensor indices"
-        )
-
-    # IDs corresponding to the final sorted EKF indices
-    selected_node_ids = [
-        node_ids[idx]
-        for idx in selected_node_indices
-    ]
-
-    selected_link_ids = [
-        link_ids[idx]
-        for idx in selected_link_indices
-    ]
 
     return {
         "network": network_name,
-
         "n_node_sensors": n_sensors,
         "n_link_sensors": n_sensors,
-
         "node_indices": selected_node_indices,
-        "node_ids": selected_node_ids,
-
+        "node_ids": [
+            node_ids[index]
+            for index in selected_node_indices
+        ],
         "link_indices": selected_link_indices,
-        "link_ids": selected_link_ids,
-
+        "link_ids": [
+            link_ids[index]
+            for index in selected_link_indices
+        ],
         "node_centrality": {
-            node_id: float(
-                node_scores[node_id]
-            )
-            for node_id
-            in selected_node_ids_ranked
+            node_id: float(node_centrality[node_id])
+            for node_id in selected_node_ids
         },
-
         "link_centrality": {
-            link_id: float(
-                edge_scores[link_id]
-            )
-            for link_id
-            in selected_link_ids_ranked
+            link_id: float(link_centrality[link_id])
+            for link_id in selected_link_ids
         },
     }
 
 
-if __name__ == "__main__":
+def main():
+    RESULTS_DIR.mkdir(exist_ok=True)
 
-    results = {}
+    placements = {}
 
-    for network_name in [
-        "net1",
-        "hanoi",
-        "cydbp",
-    ]:
-
-        print()
-        print("=" * 72)
-        print(network_name.upper())
-        print("=" * 72)
-
-        placement = compute_placement(
-            network_name
-        )
-
-        results[network_name] = placement
+    for network_name in SENSOR_COUNTS:
+        placements[network_name] = compute_placement(network_name)
 
         print(
-            "Node indices:",
-            placement["node_indices"],
+            f"{network_name}: "
+            f"{SENSOR_COUNTS[network_name]} node and link sensors"
         )
 
-        print(
-            "Node IDs:",
-            placement["node_ids"],
-        )
+    output_path = RESULTS_DIR / "centrality_sensor_placements.json"
 
-        print(
-            "Link indices:",
-            placement["link_indices"],
-        )
-
-        print(
-            "Link IDs:",
-            placement["link_ids"],
-        )
-
-        print(
-            "Unique node sensors:",
-            len(set(
-                placement["node_indices"]
-            )),
-        )
-
-        print(
-            "Unique link sensors:",
-            len(set(
-                placement["link_indices"]
-            )),
-        )
-
-    RESULT_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    output_path = (
-        RESULT_DIR
-        / "centrality_sensor_placements.json"
-    )
-
-    with output_path.open(
-        "w",
-        encoding="utf-8",
-    ) as file:
-
+    with output_path.open("w", encoding="utf-8") as file:
         json.dump(
-            results,
+            placements,
             file,
             indent=2,
         )
 
-    print()
-    print("Saved:")
-    print(output_path)
+    print(f"Saved placements to: {output_path}")
+
+
+if __name__ == "__main__":
+    main()

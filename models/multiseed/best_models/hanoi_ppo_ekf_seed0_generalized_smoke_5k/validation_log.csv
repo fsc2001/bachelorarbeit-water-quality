@@ -1,3 +1,0 @@
-validation_number,training_timesteps,score,mean_reward,mean_action,cumulative_action,outside_range_fraction,lower_violation_fraction,upper_violation_fraction,mean_violation_per_node_value,cumulative_total_violation,minimum_node_chlorine,maximum_node_chlorine,is_new_best
-1,2500,9.095578116481787,-9.095578327178956,0.0008027165755629539,0.0802716575562954,1.0,1.0,0.0,0.284236565291126,909.5570089316033,0.0,0.041059453040361404,True
-2,5000,9.600000000000016,-9.600000381469727,0.0,0.0,1.0,1.0,0.0,0.3000000000000005,960.0000000000016,0.0,0.0,False

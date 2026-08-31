@@ -1,14 +1,11 @@
 {
-  "training_timesteps": 20000,
-  "score": 0.6231637022068294,
-  "mean_reward": -0.6231637045237003,
-  "mean_action": 0.149405073877424,
-  "cumulative_action": 74.702536938712,
-  "outside_range_fraction": 0.159,
-  "lower_violation_fraction": 0.159,
-  "upper_violation_fraction": 0.0,
-  "mean_violation_per_node_value": 0.01942717660837672,
-  "cumulative_total_violation": 310.83482573402756,
-  "minimum_node_chlorine": 0.0,
-  "maximum_node_chlorine": 1.7999531030654914
+  "training_timesteps": 18000,
+  "score": 0.3385272023890745,
+  "mean_reward": -0.338527202162426,
+  "mean_action": 0.8362623251639306,
+  "cumulative_action": 418.1311625819653,
+  "outside_range_fraction": 0.07125,
+  "lower_violation_fraction": 0.0541875,
+  "upper_violation_fraction": 0.0170625,
+  "mean_violation_per_node_value": 0.010317643098044851
 }

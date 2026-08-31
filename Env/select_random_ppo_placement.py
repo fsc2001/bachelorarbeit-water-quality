@@ -1,10 +1,15 @@
+"""
+This module selects representative random sensor placements for the PPO experiments.
+"""
+
+import json
 from pathlib import Path
 
 import pandas as pd
 
 
-ROOT = Path(__file__).resolve().parents[1]
-RESULT_DIR = ROOT / "results"
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+RESULTS_DIR = PROJECT_DIR / "results"
 
 SENSOR_COUNTS = {
     "net1": 3,
@@ -13,66 +18,68 @@ SENSOR_COUNTS = {
 }
 
 
-for network_name, n_sensors in SENSOR_COUNTS.items():
-
-    path = (
-        RESULT_DIR
+def select_placement(network_name, n_sensors):
+    results_path = (
+        RESULTS_DIR
         / f"{network_name}_ekf_random_sensors_validation.csv"
     )
 
-    df = pd.read_csv(path)
+    results = pd.read_csv(results_path)
 
-    # Only use the sensor count selected for PPO
-    subset = df[
-        df["n_sensors"] == n_sensors
+    network_results = results[
+        results["n_sensors"] == n_sensors
     ].copy()
 
-    if len(subset) == 0:
+    if network_results.empty:
         raise RuntimeError(
-            f"No results found for "
-            f"{network_name}, sensors={n_sensors}"
+            f"No validation results found for {network_name} "
+            f"with {n_sensors} sensors."
         )
 
-    mae_column = (
-        "all_mae"
-        if "all_mae" in subset.columns
-        else "mae"
-    )
+    median_mae = network_results["all_mae"].median()
 
-    print("Available columns:")
-    print(list(subset.columns))
-
-    median_mae = subset[mae_column].median()
-
-    subset["distance_to_median"] = (
-            subset[mae_column] - median_mae
+    network_results["distance_to_median"] = (
+        network_results["all_mae"] - median_mae
     ).abs()
 
-    selected = subset.sort_values(
-        [
-            "distance_to_median",
-            "seed",
-        ]
+    selected = network_results.sort_values(
+        ["distance_to_median", "seed"]
     ).iloc[0]
 
-    print()
-    print("=" * 60)
-    print(network_name.upper())
-    print("=" * 60)
+    return {
+        "n_sensors": n_sensors,
+        "seed": int(selected["seed"]),
+        "validation_mae": float(selected["all_mae"]),
+    }
 
-    print("Sensors:", n_sensors)
-    print("Median MAE:", median_mae)
-    print("Selected seed:", int(selected["seed"]))
-    print("Selected MAE:", selected[mae_column])
 
-    if "node_indices" in selected.index:
-        print(
-            "Node indices:",
-            selected["node_indices"]
+def main():
+    selected_placements = {}
+
+    for network_name, n_sensors in SENSOR_COUNTS.items():
+        selected = select_placement(
+            network_name,
+            n_sensors,
         )
 
-    if "link_indices" in selected.index:
+        selected_placements[network_name] = selected
+
         print(
-            "Link indices:",
-            selected["link_indices"]
+            f"{network_name}: seed {selected['seed']}, "
+            f"MAE={selected['validation_mae']:.4f}"
         )
+
+    output_path = RESULTS_DIR / "selected_random_ppo_placements.json"
+
+    with output_path.open("w", encoding="utf-8") as file:
+        json.dump(
+            selected_placements,
+            file,
+            indent=2,
+        )
+
+    print(f"Saved selection to: {output_path}")
+
+
+if __name__ == "__main__":
+    main()

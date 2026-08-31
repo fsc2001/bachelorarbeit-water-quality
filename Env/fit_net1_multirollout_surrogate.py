@@ -1,3 +1,6 @@
+"""
+This module trains the Net1 surrogate model using multiple training rollouts.
+"""
 import os
 import sys
 from pathlib import Path
@@ -6,211 +9,109 @@ import numpy as np
 from epyt_flow.simulation import ScadaData
 
 
-ROOT = Path(__file__).resolve().parents[1]
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+REFERENCE_REPO = PROJECT_DIR / "NeuralSurrogateKalmanChlorineEstimation"
+DATA_DIR = REFERENCE_REPO / "data"
 
-REPO = (
-    ROOT
-    / "NeuralSurrogateKalmanChlorineEstimation"
-)
-
-DATA_DIR = REPO / "data"
-
-os.chdir(REPO)
-sys.path.insert(0, str(REPO))
+os.chdir(REFERENCE_REPO)
+sys.path.insert(0, str(REFERENCE_REPO))
 
 from fit_surrogates import get_mlp_state_transition_model
 
 
 N_ROLLOUTS = 5
-
-OUTPUT_PATH = (
-    DATA_DIR
-    / "net1_randDemand=True_surrogate_multi5.pt"
-)
+OUTPUT_PATH = DATA_DIR / "net1_randDemand=True_surrogate_multi5.pt"
 
 
-def load_rollout(rollout_idx: int):
-    stem = (
-        "net1_randDemand=True_"
-        f"training_rollout{rollout_idx}"
-    )
+def load_rollout(rollout_index):
+    file_stem = f"net1_randDemand=True_training_rollout{rollout_index}"
 
-    scada_path = (
-        DATA_DIR
-        / f"{stem}.epytflow_scada_data"
-    )
-
-    actions_path = (
-        DATA_DIR
-        / f"{stem}.npz"
-    )
+    scada_path = DATA_DIR / f"{file_stem}.epytflow_scada_data"
+    actions_path = DATA_DIR / f"{file_stem}.npz"
 
     if not scada_path.exists():
-        raise FileNotFoundError(
-            f"Missing SCADA file: {scada_path}"
-        )
+        raise FileNotFoundError(f"Missing SCADA file: {scada_path}")
 
     if not actions_path.exists():
-        raise FileNotFoundError(
-            f"Missing actions file: {actions_path}"
-        )
+        raise FileNotFoundError(f"Missing actions file: {actions_path}")
 
-    scada = ScadaData.load_from_file(
-        str(scada_path)
-    )
+    scada_data = ScadaData.load_from_file(str(scada_path))
 
-    actions = np.asarray(
-        np.load(
-            actions_path,
-            allow_pickle=False,
-        )["control_actions"]
-    )
+    control_actions = np.load(
+        actions_path,
+        allow_pickle=False,
+    )["control_actions"]
 
-    flows = np.asarray(
-        scada.get_data_flows()
-    )
-
-    nodes_quality = np.asarray(
-        scada.get_data_nodes_quality()
-    )
-
-    links_quality = np.asarray(
-        scada.get_data_links_quality()
-    )
+    flows = np.asarray(scada_data.get_data_flows())
+    node_quality = np.asarray(scada_data.get_data_nodes_quality())
+    link_quality = np.asarray(scada_data.get_data_links_quality())
 
     n_time_steps = flows.shape[0]
 
-    # Exakt wie WaterQualityStateTransitionSurrogate.fit_to_scada
-    cur_state = np.concatenate(
+    current_state = np.concatenate(
         (
-            nodes_quality[:n_time_steps - 1],
-            links_quality[:n_time_steps - 1],
+            node_quality[:-1],
+            link_quality[:-1],
         ),
         axis=1,
     )
 
-    next_time_varying_quantity = np.concatenate(
+    flow_action_inputs = np.concatenate(
         (
             flows[1:],
-            actions[:n_time_steps - 1],
+            control_actions[:n_time_steps - 1],
         ),
         axis=1,
     )
 
     next_state = np.concatenate(
         (
-            nodes_quality[1:],
-            links_quality[1:],
+            node_quality[1:],
+            link_quality[1:],
         ),
         axis=1,
     )
 
-    return (
-        cur_state,
-        next_time_varying_quantity,
-        next_state,
-    )
+    return current_state, flow_action_inputs, next_state
 
 
-def main() -> None:
-    all_cur_state = []
-    all_next_quantities = []
-    all_next_state = []
+def main():
+    current_state_batches = []
+    input_batches = []
+    next_state_batches = []
 
-    for rollout_idx in range(N_ROLLOUTS):
-        (
-            cur_state,
-            next_quantities,
-            next_state,
-        ) = load_rollout(
-            rollout_idx
+    for rollout_index in range(N_ROLLOUTS):
+        current_state, flow_action_inputs, next_state = load_rollout(
+            rollout_index
         )
 
-        print(
-            f"Rollout {rollout_idx}: "
-            f"{cur_state.shape[0]} transitions"
-        )
+        current_state_batches.append(current_state)
+        input_batches.append(flow_action_inputs)
+        next_state_batches.append(next_state)
 
-        all_cur_state.append(
-            cur_state
-        )
+        print(f"Loaded rollout {rollout_index + 1}/{N_ROLLOUTS}")
 
-        all_next_quantities.append(
-            next_quantities
-        )
-
-        all_next_state.append(
-            next_state
-        )
-
-    # Erst fertige Übergänge zusammenführen.
-    cur_state = np.concatenate(
-        all_cur_state,
-        axis=0,
-    )
-
-    next_quantities = np.concatenate(
-        all_next_quantities,
-        axis=0,
-    )
-
-    next_state = np.concatenate(
-        all_next_state,
-        axis=0,
-    )
-
-    print("\nCombined training data:")
-    print(
-        "cur_state:",
-        cur_state.shape,
-    )
-    print(
-        "next quantities:",
-        next_quantities.shape,
-    )
-    print(
-        "next_state:",
-        next_state.shape,
-    )
+    current_states = np.concatenate(current_state_batches, axis=0)
+    flow_action_inputs = np.concatenate(input_batches, axis=0)
+    next_states = np.concatenate(next_state_batches, axis=0)
 
     if not (
-        np.all(np.isfinite(cur_state))
-        and np.all(np.isfinite(next_quantities))
-        and np.all(np.isfinite(next_state))
+        np.all(np.isfinite(current_states))
+        and np.all(np.isfinite(flow_action_inputs))
+        and np.all(np.isfinite(next_states))
     ):
-        raise RuntimeError(
-            "Training data contains non-finite values."
-        )
+        raise RuntimeError("Training data contains non-finite values.")
 
-    model = get_mlp_state_transition_model(
-        "Net1"
+    model = get_mlp_state_transition_model("Net1")
+
+    first_rollout_path = (
+        DATA_DIR
+        / "net1_randDemand=True_training_rollout0.epytflow_scada_data"
     )
+    first_scada = ScadaData.load_from_file(str(first_rollout_path))
 
-    # Das DNN muss vor dem direkten fit()-Aufruf
-    # initialisiert werden. Normalerweise geschieht
-    # dies über WaterQualityStateTransitionSurrogate.
-    first_scada = ScadaData.load_from_file(
-        str(
-            DATA_DIR
-            / (
-                "net1_randDemand=True_"
-                "training_rollout0.epytflow_scada_data"
-            )
-        )
-    )
-
-    input_size = (
-            cur_state.shape[1]
-            + next_quantities.shape[1]
-    )
-
-    state_size = next_state.shape[1]
-
-    print(
-        "Initializing model:",
-        f"input_size={input_size},",
-        f"state_size={state_size}",
-    )
+    input_size = current_states.shape[1] + flow_action_inputs.shape[1]
+    state_size = next_states.shape[1]
 
     model.init(
         first_scada.network_topo,
@@ -218,21 +119,17 @@ def main() -> None:
         state_size,
     )
 
-    print("\nTraining Net1 multi-rollout surrogate ...")
+    print("Training Net1 surrogate...")
 
     model.fit(
-        cur_state,
-        next_quantities,
-        next_state,
+        current_states,
+        flow_action_inputs,
+        next_states,
     )
 
-    model.save_to_file(
-        str(OUTPUT_PATH)
-    )
+    model.save_to_file(str(OUTPUT_PATH))
 
-    print("\nTraining finished.")
-    print("Saved model:")
-    print(OUTPUT_PATH)
+    print(f"Saved model to: {OUTPUT_PATH}")
 
 
 if __name__ == "__main__":

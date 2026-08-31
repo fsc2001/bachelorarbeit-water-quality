@@ -1,13 +1,16 @@
+"""
+This module creates multiple Net1 training rollouts for surrogate model training.
+"""
 import os
 import sys
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
-REPO = ROOT / "NeuralSurrogateKalmanChlorineEstimation"
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+REFERENCE_REPO = PROJECT_DIR / "NeuralSurrogateKalmanChlorineEstimation"
 
-os.chdir(REPO)
-sys.path.insert(0, str(REPO))
+os.chdir(REFERENCE_REPO)
+sys.path.insert(0, str(REFERENCE_REPO))
 
 from create_data import create_data_set
 
@@ -15,28 +18,20 @@ from create_data import create_data_set
 N_ROLLOUTS = 5
 
 
-def main() -> None:
-    for rollout_idx in range(N_ROLLOUTS):
-        file_out = (
-            "net1_randDemand=True_"
-            f"training_rollout{rollout_idx}"
-        )
+def main():
+    for rollout_index in range(N_ROLLOUTS):
+        output_name = f"net1_randDemand=True_training_rollout{rollout_index}"
 
-        print("\n" + "=" * 72)
-        print(
-            f"NET1 TRAINING ROLLOUT "
-            f"{rollout_idx + 1}/{N_ROLLOUTS}"
-        )
-        print("=" * 72)
+        print(f"Create net1 rollout {rollout_index + 1}/{N_ROLLOUTS}")
 
         create_data_set(
             use_net1=True,
             randomized_demands=True,
-            file_out=file_out,
+            file_out=output_name,
             path_out="data",
         )
 
-    print("\nAlle Rollouts erzeugt.")
+    print("Net1 rollouts created")
 
 
 if __name__ == "__main__":

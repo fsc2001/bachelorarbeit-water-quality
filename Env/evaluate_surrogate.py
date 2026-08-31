@@ -1,3 +1,8 @@
+"""
+This module evaluates the surrogate model on validation and test data.
+"""
+
+import csv
 import sys
 from pathlib import Path
 
@@ -5,118 +10,72 @@ import numpy as np
 from epyt_flow.simulation import ScadaData
 
 
-ROOT = Path(__file__).resolve().parents[1]
-REPO = ROOT / "NeuralSurrogateKalmanChlorineEstimation"
-DATA_DIR = REPO / "data"
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+REFERENCE_REPO = PROJECT_DIR / "NeuralSurrogateKalmanChlorineEstimation"
+DATA_DIR = REFERENCE_REPO / "data"
+RESULTS_DIR = PROJECT_DIR / "results"
 
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(REPO))
+sys.path.insert(0, str(PROJECT_DIR))
+sys.path.insert(0, str(REFERENCE_REPO))
 
 from Env.network_config import NETWORKS
 from run_exp_state_estimation import get_state_transition_model
 
 
-# ============================================================
-# Configuration
-# ============================================================
-
-NETWORK_NAME = "net1"
-NETWORK = NETWORKS[NETWORK_NAME]
-
+NETWORK_NAME = "hanoi"
 RANDOMIZED_DEMANDS = True
 
-DATASET_PREFIX = (
-    f"{NETWORK_NAME}_randDemand={RANDOMIZED_DEMANDS}"
-)
+LOWER_BOUND = 0.3
+UPPER_BOUND = 2.0
 
-N_NODES = NETWORK.n_nodes
-N_LINKS = NETWORK.n_links
-N_CHLORINE = N_NODES + N_LINKS
+NETWORK = NETWORKS[NETWORK_NAME]
+N_CHLORINE = NETWORK.n_nodes + NETWORK.n_links
 
 
-# ============================================================
-# Metrics
-# ============================================================
+def compute_metrics(true_values, predicted_values):
+    errors = predicted_values - true_values
 
-def print_metrics(
-    name: str,
-    y_true: np.ndarray,
-    y_pred: np.ndarray,
-) -> None:
-    error = y_pred - y_true
-
-    mae = np.mean(np.abs(error))
-    median_ae = np.median(np.abs(error))
-    rmse = np.sqrt(np.mean(error ** 2))
-    max_ae = np.max(np.abs(error))
-
-    print(f"\n{name}:")
-    print(f"  MAE:       {mae:.6f} mg/L")
-    print(f"  Median AE: {median_ae:.6f} mg/L")
-    print(f"  RMSE:      {rmse:.6f} mg/L")
-    print(f"  Max AE:    {max_ae:.6f} mg/L")
+    return {
+        "mae": float(np.mean(np.abs(errors))),
+        "rmse": float(np.sqrt(np.mean(errors ** 2))),
+    }
 
 
-# ============================================================
-# Evaluation
-# ============================================================
-
-def evaluate_dataset(split: str) -> None:
-    dataset_name = f"{DATASET_PREFIX}_{split}"
-
-    scada_path = (
-        DATA_DIR
-        / f"{dataset_name}.epytflow_scada_data"
+def print_metrics(name, metrics):
+    print(
+        f"{name}: "
+        f"MAE={metrics['mae']:.4f} mg/L, "
+        f"RMSE={metrics['rmse']:.4f} mg/L"
     )
 
-    actions_path = (
-        DATA_DIR
-        / f"{dataset_name}.npz"
+
+def evaluate_dataset(split):
+    dataset_name = (
+        f"{NETWORK_NAME}_randDemand={RANDOMIZED_DEMANDS}_{split}"
     )
 
-    model_path = (
-            DATA_DIR
-            / NETWORK.surrogate_filename
-    )
+    scada_path = DATA_DIR / f"{dataset_name}.epytflow_scada_data"
+    actions_path = DATA_DIR / f"{dataset_name}.npz"
+    model_path = DATA_DIR / NETWORK.surrogate_filename
 
     if not scada_path.exists():
-        raise FileNotFoundError(
-            f"SCADA dataset not found: {scada_path}"
-        )
+        raise FileNotFoundError(f"SCADA dataset not found: {scada_path}")
 
     if not actions_path.exists():
-        raise FileNotFoundError(
-            f"Action dataset not found: {actions_path}"
-        )
+        raise FileNotFoundError(f"Action dataset not found: {actions_path}")
 
-    scada = ScadaData.load_from_file(
-        str(scada_path)
-    )
+    scada_data = ScadaData.load_from_file(str(scada_path))
 
-    actions = np.asarray(
-        np.load(
-            actions_path,
-            allow_pickle=False,
-        )["control_actions"]
-    )
+    control_actions = np.load(
+        actions_path,
+        allow_pickle=False,
+    )["control_actions"]
 
-    node_quality = np.asarray(
-        scada.get_data_nodes_quality()
-    )
+    node_quality = np.asarray(scada_data.get_data_nodes_quality())
+    link_quality = np.asarray(scada_data.get_data_links_quality())
+    flows = np.asarray(scada_data.get_data_flows())
 
-    link_quality = np.asarray(
-        scada.get_data_links_quality()
-    )
-
-    flows = np.asarray(
-        scada.get_data_flows()
-    )
-
-    n_time_steps = node_quality.shape[0]
-
-    # Gleicher Aufbau wie im Referenzcode:
-    # Chlor(t) sowie bereits bekannte Flows(t+1).
-    current_state = np.concatenate(
+    current_states = np.concatenate(
         (
             node_quality[:-1],
             link_quality[:-1],
@@ -125,7 +84,7 @@ def evaluate_dataset(split: str) -> None:
         axis=1,
     )
 
-    control = actions[:n_time_steps - 1]
+    control_actions = control_actions[:current_states.shape[0]]
 
     true_next_chlorine = np.concatenate(
         (
@@ -149,42 +108,33 @@ def evaluate_dataset(split: str) -> None:
     )
 
     model.n_missing_flows = N_CHLORINE
-
-    # Skalierung wie im offiziellen EKF-Code
-    # explizit selbst durchführen.
     model._normalize_input_output = False
 
-    scaler_input = np.concatenate(
+    model_input = np.concatenate(
         (
-            current_state,
-            control,
+            current_states,
+            control_actions,
         ),
         axis=1,
     )
 
-    scaled_input = model._scaler.transform(
-        scaler_input
-    )
-
-    scaled_state = scaled_input[
-        :,
-        :current_state.shape[1],
-    ]
+    scaled_input = model._scaler.transform(model_input)
+    scaled_states = scaled_input[:, :current_states.shape[1]]
 
     scaled_prediction = np.asarray(
         model.predict(
-            scaled_state,
-            control,
+            scaled_states,
+            control_actions,
         )
     )
 
-    inverse_input = np.concatenate(
+    prediction_with_controls = np.concatenate(
         (
             scaled_prediction,
             np.zeros(
                 (
                     scaled_prediction.shape[0],
-                    control.shape[1],
+                    control_actions.shape[1],
                 )
             ),
         ),
@@ -192,155 +142,116 @@ def evaluate_dataset(split: str) -> None:
     )
 
     prediction = model._scaler.inverse_transform(
-        inverse_input
-    )[:, :current_state.shape[1]]
+        prediction_with_controls
+    )[:, :current_states.shape[1]]
 
-    predicted_chlorine = prediction[
-        :,
-        :N_CHLORINE,
-    ]
+    predicted_chlorine = prediction[:, :N_CHLORINE]
 
-    predicted_nodes = predicted_chlorine[
-        :,
-        :N_NODES,
-    ]
+    n_nodes = NETWORK.n_nodes
 
-    predicted_links = predicted_chlorine[
-        :,
-        N_NODES:,
-    ]
+    model_metrics = {
+        "all": compute_metrics(
+            true_next_chlorine,
+            predicted_chlorine,
+        ),
+        "nodes": compute_metrics(
+            true_next_chlorine[:, :n_nodes],
+            predicted_chlorine[:, :n_nodes],
+        ),
+        "links": compute_metrics(
+            true_next_chlorine[:, n_nodes:],
+            predicted_chlorine[:, n_nodes:],
+        ),
+    }
 
-    true_nodes = true_next_chlorine[
-        :,
-        :N_NODES,
-    ]
+    persistence_metrics = {
+        "all": compute_metrics(
+            true_next_chlorine,
+            persistence_prediction,
+        ),
+        "nodes": compute_metrics(
+            true_next_chlorine[:, :n_nodes],
+            persistence_prediction[:, :n_nodes],
+        ),
+        "links": compute_metrics(
+            true_next_chlorine[:, n_nodes:],
+            persistence_prediction[:, n_nodes:],
+        ),
+    }
 
-    true_links = true_next_chlorine[
-        :,
-        N_NODES:,
-    ]
-
-    print("\n" + "=" * 70)
-    print(
-        f"{NETWORK_NAME.upper()} - {split.upper()}"
-    )
-    print("=" * 70)
-
-    print(
-        "Current state shape:",
-        current_state.shape,
-    )
-
-    print(
-        "Control shape:",
-        control.shape,
+    control_mask = (
+        (true_next_chlorine >= LOWER_BOUND)
+        & (true_next_chlorine <= UPPER_BOUND)
     )
 
-    print(
-        "Prediction shape:",
-        prediction.shape,
+    control_metrics = compute_metrics(
+        true_next_chlorine[control_mask],
+        predicted_chlorine[control_mask],
     )
 
-    print(
-        "Prediction finite:",
-        bool(np.all(np.isfinite(prediction))),
-    )
+    print(f"\n{NETWORK.model_name} surrogate - {split}")
+    print_metrics("All states", model_metrics["all"])
+    print_metrics("Nodes", model_metrics["nodes"])
+    print_metrics("Links", model_metrics["links"])
+    print_metrics("Persistence baseline", persistence_metrics["all"])
+    print_metrics("Control-relevant range", control_metrics)
 
-    print(
-        "Predicted chlorine min/max:",
-        float(predicted_chlorine.min()),
-        float(predicted_chlorine.max()),
-    )
+    return model_metrics, persistence_metrics, control_metrics
 
-    print(
-        "True chlorine min/max:",
-        float(true_next_chlorine.min()),
-        float(true_next_chlorine.max()),
-    )
 
-    print_metrics(
-        "Node chlorine",
-        true_nodes,
-        predicted_nodes,
-    )
+def main():
+    RESULTS_DIR.mkdir(exist_ok=True)
 
-    print_metrics(
-        "Link chlorine",
-        true_links,
-        predicted_links,
-    )
+    rows = []
 
-    print_metrics(
-        "All chlorine states",
-        true_next_chlorine,
-        predicted_chlorine,
-    )
-
-    print_metrics(
-        "Persistence baseline: all chlorine states",
-        true_next_chlorine,
-        persistence_prediction,
-    )
-
-    print_metrics(
-        "Persistence baseline: node chlorine",
-        true_nodes,
-        persistence_prediction[:, :N_NODES],
-    )
-
-    print_metrics(
-        "Persistence baseline: link chlorine",
-        true_links,
-        persistence_prediction[:, N_NODES:],
-    )
-
-    # Für unsere Regelungsaufgabe besonders relevanter Bereich.
-    safety_relevant_mask = (
-        (true_next_chlorine >= 0.3)
-        & (true_next_chlorine <= 2.0)
-    )
-
-    safety_error = (
-        predicted_chlorine[safety_relevant_mask]
-        - true_next_chlorine[safety_relevant_mask]
-    )
-
-    print("\nControl-relevant concentration range [0.3, 2.0] mg/L:")
-    print(
-        "  Anzahl Werte:",
-        safety_error.size,
-    )
-
-    if safety_error.size > 0:
-        print(
-            "  MAE:",
-            float(
-                np.mean(
-                    np.abs(safety_error)
-                )
-            ),
+    for split in ("validation", "test"):
+        model_metrics, persistence_metrics, control_metrics = (
+            evaluate_dataset(split)
         )
 
-        print(
-            "  RMSE:",
-            float(
-                np.sqrt(
-                    np.mean(
-                        safety_error ** 2
-                    )
-                )
-            ),
-        )
-    else:
-        print(
-            "  Keine Werte in diesem Bereich."
+        for scope in ("all", "nodes", "links"):
+            rows.append(
+                {
+                    "network": NETWORK_NAME,
+                    "split": split,
+                    "model": "surrogate",
+                    "scope": scope,
+                    **model_metrics[scope],
+                }
+            )
+
+            rows.append(
+                {
+                    "network": NETWORK_NAME,
+                    "split": split,
+                    "model": "persistence",
+                    "scope": scope,
+                    **persistence_metrics[scope],
+                }
+            )
+
+        rows.append(
+            {
+                "network": NETWORK_NAME,
+                "split": split,
+                "model": "surrogate",
+                "scope": "control_range",
+                **control_metrics,
+            }
         )
 
+    output_path = RESULTS_DIR / f"{NETWORK_NAME}_surrogate_evaluation.csv"
 
-# ============================================================
-# Main
-# ============================================================
+    with output_path.open("w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(
+            file,
+            fieldnames=rows[0].keys(),
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+    print(f"\nSaved results to: {output_path}")
+
 
 if __name__ == "__main__":
-    evaluate_dataset("validation")
-    evaluate_dataset("test")
+    main()
