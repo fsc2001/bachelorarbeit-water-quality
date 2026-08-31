@@ -1,0 +1,17 @@
+{
+  "net1": {
+    "n_sensors": 3,
+    "seed": 0,
+    "validation_mae": 0.2892301054674394
+  },
+  "hanoi": {
+    "n_sensors": 10,
+    "seed": 4,
+    "validation_mae": 0.761401145510364
+  },
+  "cydbp": {
+    "n_sensors": 75,
+    "seed": 4,
+    "validation_mae": 0.4285042768543583
+  }
+}
