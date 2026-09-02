@@ -5,7 +5,7 @@ This module evaluates the surrogate model on validation and test data.
 import csv
 import sys
 from pathlib import Path
-
+import matplotlib.pyplot as plt
 import numpy as np
 from epyt_flow.simulation import ScadaData
 
@@ -22,7 +22,7 @@ from Env.network_config import NETWORKS
 from run_exp_state_estimation import get_state_transition_model
 
 
-NETWORK_NAME = "hanoi"
+NETWORK_NAME = "net1"
 RANDOMIZED_DEMANDS = True
 
 LOWER_BOUND = 0.3
@@ -48,6 +48,74 @@ def print_metrics(name, metrics):
         f"RMSE={metrics['rmse']:.4f} mg/L"
     )
 
+def diagnose_predictions(
+    split: str,
+    true_nodes: np.ndarray,
+    predicted_nodes: np.ndarray,
+    true_links: np.ndarray,
+    predicted_links: np.ndarray,
+) -> None:
+
+    print("\n" + "-" * 70)
+    print(f"DIAGNOSTICS - {split.upper()}")
+    print("-" * 70)
+
+    print("Number of transitions:", true_nodes.shape[0])
+
+    def describe(name, values):
+        print(
+            f"{name}: "
+            f"min={values.min():.4f}, "
+            f"max={values.max():.4f}, "
+            f"mean={values.mean():.4f}, "
+            f"std={values.std():.4f}"
+        )
+
+    describe("True nodes     ", true_nodes)
+    describe("Predicted nodes", predicted_nodes)
+    describe("True links     ", true_links)
+    describe("Predicted links", predicted_links)
+
+    node_error = predicted_nodes - true_nodes
+
+    print(
+        "Node mean error / bias:",
+        float(np.mean(node_error)),
+    )
+
+    # Drei Nodes mit der größten zeitlichen Variation auswählen.
+    node_variance = np.var(true_nodes, axis=0)
+
+    selected_nodes = np.argsort(
+        node_variance
+    )[-3:]
+
+    n_plot_steps = min(
+        100,
+        true_nodes.shape[0],
+    )
+
+    for node_idx in selected_nodes:
+        plt.figure()
+
+        plt.plot(
+            true_nodes[:n_plot_steps, node_idx],
+            label="True",
+        )
+
+        plt.plot(
+            predicted_nodes[:n_plot_steps, node_idx],
+            label="Predicted",
+        )
+
+        plt.xlabel("Time step")
+        plt.ylabel("Chlorine concentration [mg/L]")
+        plt.title(
+            f"{split}: Node {node_idx}"
+        )
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
 
 def evaluate_dataset(split):
     dataset_name = (
@@ -121,10 +189,15 @@ def evaluate_dataset(split):
     scaled_input = model._scaler.transform(model_input)
     scaled_states = scaled_input[:, :current_states.shape[1]]
 
+    scaled_controls = scaled_input[
+                      :,
+                      current_states.shape[1]:
+                      ]
+
     scaled_prediction = np.asarray(
         model.predict(
             scaled_states,
-            control_actions,
+            scaled_controls,
         )
     )
 
@@ -149,18 +222,32 @@ def evaluate_dataset(split):
 
     n_nodes = NETWORK.n_nodes
 
+    true_nodes = true_next_chlorine[:, :n_nodes]
+    true_links = true_next_chlorine[:, n_nodes:]
+
+    predicted_nodes = predicted_chlorine[:, :n_nodes]
+    predicted_links = predicted_chlorine[:, n_nodes:]
+
+    diagnose_predictions(
+        split,
+        true_nodes,
+        predicted_nodes,
+        true_links,
+        predicted_links,
+    )
+
     model_metrics = {
         "all": compute_metrics(
             true_next_chlorine,
             predicted_chlorine,
         ),
         "nodes": compute_metrics(
-            true_next_chlorine[:, :n_nodes],
-            predicted_chlorine[:, :n_nodes],
+            true_nodes,
+            predicted_nodes,
         ),
         "links": compute_metrics(
-            true_next_chlorine[:, n_nodes:],
-            predicted_chlorine[:, n_nodes:],
+            true_links,
+            predicted_links,
         ),
     }
 
@@ -204,7 +291,30 @@ def main():
 
     rows = []
 
-    for split in ("validation", "test"):
+    training_path = (
+            DATA_DIR
+            / f"{NETWORK_NAME}_randDemand={RANDOMIZED_DEMANDS}_training.epytflow_scada_data"
+    )
+
+    training_scada = ScadaData.load_from_file(
+        str(training_path)
+    )
+
+    training_steps = np.asarray(
+        training_scada.get_data_nodes_quality()
+    ).shape[0]
+
+    print(
+        "\nTraining time steps:",
+        training_steps,
+    )
+
+    print(
+        "Training transitions:",
+        training_steps - 1,
+    )
+
+    for split in ("training", "validation", "test"):
         model_metrics, persistence_metrics, control_metrics = (
             evaluate_dataset(split)
         )

@@ -5,7 +5,6 @@ This module contains the network-specific configuration for all benchmark networ
 from dataclasses import dataclass
 from typing import Optional
 
-
 @dataclass(frozen=True)
 class NetworkConfig:
     name: str
