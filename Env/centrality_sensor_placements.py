@@ -5,10 +5,8 @@ This module generates centrality-based sensor placements for all networks.
 import json
 import sys
 from pathlib import Path
-
 import networkx as nx
 from epyt_flow.simulation.scada import ScadaData
-
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 REFERENCE_REPO = PROJECT_DIR / "NeuralSurrogateKalmanChlorineEstimation"
@@ -18,7 +16,6 @@ RESULTS_DIR = PROJECT_DIR / "results"
 sys.path.insert(0, str(PROJECT_DIR))
 
 from Env.network_config import NETWORKS
-
 
 SENSOR_COUNTS = {
     "net1": 3,

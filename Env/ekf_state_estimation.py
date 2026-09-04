@@ -1,23 +1,23 @@
 """
-This module uses an EKF for chlorine state estimation with fixed sensor placements.
+This module performs EKF-based chlorine state estimation
+for fixed sensor locations.
 """
 
 import sys
 from pathlib import Path
 
 import numpy as np
+from epyt_control.signal_processing.state_estimation import (
+    TimeVaryingExtendedKalmanFilter,
+)
+from epyt_flow.simulation import ScadaData
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 REFERENCE_REPO = PROJECT_DIR / "NeuralSurrogateKalmanChlorineEstimation"
 
-sys.path.insert(0, str(PROJECT_DIR))
 sys.path.insert(0, str(REFERENCE_REPO))
 
-from epyt_flow.simulation import ScadaData
-from epyt_control.signal_processing.state_estimation import (
-    TimeVaryingExtendedKalmanFilter,
-)
 from run_exp_state_estimation import get_state_transition_model
 
 
@@ -26,13 +26,13 @@ def create_measurement_matrix(
     link_indices,
     n_nodes,
     n_links,
-    state_dim,
+    state_size,
 ):
     node_indices = sorted(node_indices)
     link_indices = sorted(link_indices)
 
-    observation_dim = len(node_indices) + 2 * len(link_indices)
-    measurement_matrix = np.zeros((observation_dim, state_dim))
+    n_measurements = len(node_indices) + 2 * len(link_indices)
+    measurement_matrix = np.zeros((n_measurements, state_size))
 
     measured_flow_indices = []
     row = 0
@@ -47,9 +47,10 @@ def create_measurement_matrix(
 
     for link_index in link_indices:
         flow_index = n_nodes + n_links + link_index
-        measured_flow_indices.append(flow_index)
 
         measurement_matrix[row, flow_index] = 1
+        measured_flow_indices.append(flow_index)
+
         row += 1
 
     return measurement_matrix, measured_flow_indices
@@ -64,34 +65,41 @@ def inverse_scale_state(state, scaler, n_controls):
         axis=1,
     )
 
-    return scaler.inverse_transform(state_with_controls).flatten()[:state.size]
+    state = scaler.inverse_transform(
+        state_with_controls
+    )
+
+    return state.flatten()[:state_with_controls.shape[1] - n_controls]
 
 
 def run_state_estimation(
-    net_desc,
-    scada_file_in,
-    control_actions_file_in,
-    state_transition_model_file_in,
+    network_name,
+    scada_path,
+    actions_path,
+    surrogate_path,
     node_indices,
     link_indices,
 ):
-    scada_data = ScadaData.load_from_file(scada_file_in)
+    scada_data = ScadaData.load_from_file(scada_path)
 
     control_actions = np.load(
-        control_actions_file_in
+        actions_path
     )["control_actions"]
 
-    flows = scada_data.get_data_flows()
     node_quality = scada_data.get_data_nodes_quality()
     link_quality = scada_data.get_data_links_quality()
+    flows = scada_data.get_data_flows()
 
-    n_time_steps = flows.shape[0]
+    current_states = np.concatenate(
+        (
+            node_quality[:-1],
+            link_quality[:-1],
+            flows[1:],
+        ),
+        axis=1,
+    )
 
-    current_node_quality = node_quality[:-1]
-    current_link_quality = link_quality[:-1]
-    next_flows = flows[1:]
-
-    next_states = np.concatenate(
+    next_chlorine = np.concatenate(
         (
             node_quality[1:],
             link_quality[1:],
@@ -99,30 +107,20 @@ def run_state_estimation(
         axis=1,
     )
 
-    current_states = np.concatenate(
-        (
-            current_node_quality,
-            current_link_quality,
-            next_flows,
-        ),
-        axis=1,
+    control_actions = control_actions[:current_states.shape[0]]
+
+    n_nodes = node_quality.shape[1]
+    n_links = link_quality.shape[1]
+    state_size = current_states.shape[1]
+    n_chlorine_values = next_chlorine.shape[1]
+
+    surrogate = get_state_transition_model(
+        network_name,
+        surrogate_path,
     )
 
-    control_actions = control_actions[:n_time_steps - 1]
-
-    state_dim = current_states.shape[1]
-    n_chlorine_values = next_states.shape[1]
-
-    n_nodes = current_node_quality.shape[1]
-    n_links = current_link_quality.shape[1]
-
-    state_transition_model = get_state_transition_model(
-        net_desc,
-        state_transition_model_file_in,
-    )
-
-    state_transition_model.n_missing_flows = next_states.shape[1]
-    state_transition_model._normalize_input_output = False
+    surrogate.n_missing_flows = n_chlorine_values
+    surrogate._normalize_input_output = False
 
     states_with_controls = np.concatenate(
         (
@@ -132,19 +130,19 @@ def run_state_estimation(
         axis=1,
     )
 
-    current_states = state_transition_model._scaler.transform(
+    scaled_states = surrogate._scaler.transform(
         states_with_controls
-    )[:, :state_dim]
+    )[:, :state_size]
 
-    measurement_matrix, measured_flow_indices = create_measurement_matrix(
-        node_indices=node_indices,
-        link_indices=link_indices,
-        n_nodes=n_nodes,
-        n_links=n_links,
-        state_dim=state_dim,
+    measurement_matrix, measured_flow_indices = (
+        create_measurement_matrix(
+            node_indices=node_indices,
+            link_indices=link_indices,
+            n_nodes=n_nodes,
+            n_links=n_links,
+            state_size=state_size,
+        )
     )
-
-    observation_dim = measurement_matrix.shape[0]
 
     def measurement_function(state):
         return measurement_matrix @ state.flatten()
@@ -152,77 +150,74 @@ def run_state_estimation(
     def measurement_jacobian(_):
         return measurement_matrix
 
-    def get_measurement_func(_):
-        return measurement_function
-
-    def get_measurement_func_grad(_):
-        return measurement_jacobian
-
-    def get_control_signal(time_step):
-        return control_actions[time_step + 1].reshape(1, -1)
-
-    def get_state_transition_func(time_step):
-        control_signal = get_control_signal(time_step)
+    def get_prediction_function(time_step):
+        control = control_actions[
+            time_step + 1
+        ].reshape(1, -1)
 
         def predict(state):
-            return state_transition_model.predict(
+            return surrogate.predict(
                 state.reshape(1, -1),
-                control_signal,
+                control,
             ).flatten()
 
         return predict
 
-    def get_state_transition_func_grad(time_step):
-        control_signal = get_control_signal(time_step)
+    def get_prediction_jacobian(time_step):
+        control = control_actions[
+            time_step + 1
+        ].reshape(1, -1)
 
-        def get_jacobian(current_state):
-            jacobian = state_transition_model.compute_jacobian(
-                current_state.reshape(1, -1),
-                control_signal,
+        def jacobian(state):
+            result = surrogate.compute_jacobian(
+                state.reshape(1, -1),
+                control,
             )
 
-            jacobian = jacobian.reshape(
-                jacobian.shape[1],
-                jacobian.shape[3],
+            result = result.reshape(
+                result.shape[1],
+                result.shape[3],
             )
 
-            return jacobian[:, :state_dim]
+            return result[:, :state_size]
 
-        return get_jacobian
+        return jacobian
 
     ekf = TimeVaryingExtendedKalmanFilter(
-        state_dim=state_dim,
-        obs_dim=observation_dim,
-        init_state=current_states[0],
-        get_state_transition_func=get_state_transition_func,
-        get_state_transition_func_grad=get_state_transition_func_grad,
-        get_measurement_func=get_measurement_func,
-        get_measurement_func_grad=get_measurement_func_grad,
+        state_dim=state_size,
+        obs_dim=measurement_matrix.shape[0],
+        init_state=scaled_states[0],
+        get_state_transition_func=get_prediction_function,
+        get_state_transition_func_grad=get_prediction_jacobian,
+        get_measurement_func=lambda _: measurement_function,
+        get_measurement_func_grad=lambda _: measurement_jacobian,
     )
 
     chlorine_predictions = []
     chlorine_true = []
 
-    for time_step in range(1, current_states.shape[0]):
-        current_state = current_states[time_step]
+    for time_step in range(1, scaled_states.shape[0]):
+        true_state = scaled_states[time_step]
 
-        # Measured flows are inserted directly, following the reference implementation.
+        # Insert measured flows directly as in the reference implementation.
         for flow_index in measured_flow_indices:
-            ekf._x[flow_index] = current_state[flow_index]
+            ekf._x[flow_index] = true_state[flow_index]
 
-        observation = measurement_function(current_state)
+        measurement = measurement_function(true_state)
 
-        predicted_state, _ = ekf.step(observation)
+        predicted_state, _ = ekf.step(
+            measurement
+        )
 
         predicted_state = inverse_scale_state(
             predicted_state,
-            state_transition_model._scaler,
+            surrogate._scaler,
             control_actions.shape[1],
         )
 
         true_state = inverse_scale_state(
-            current_state,
-            state_transition_model._scaler,
+            true_state,
+            surrogate._scaler,
             control_actions.shape[1],
         )
 

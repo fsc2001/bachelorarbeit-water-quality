@@ -4,9 +4,7 @@ This module selects representative random sensor placements for the PPO experime
 
 import json
 from pathlib import Path
-
 import pandas as pd
-
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 RESULTS_DIR = PROJECT_DIR / "results"
@@ -20,15 +18,15 @@ SENSOR_COUNTS = {
 
 def select_placement(network_name, n_sensors):
     results_path = (
-        RESULTS_DIR
-        / f"{network_name}_ekf_random_sensors_validation.csv"
+            RESULTS_DIR
+            / f"{network_name}_ekf_random_sensors_validation.csv"
     )
 
     results = pd.read_csv(results_path)
 
     network_results = results[
         results["n_sensors"] == n_sensors
-    ].copy()
+        ].copy()
 
     if network_results.empty:
         raise RuntimeError(
@@ -39,7 +37,7 @@ def select_placement(network_name, n_sensors):
     median_mae = network_results["all_mae"].median()
 
     network_results["distance_to_median"] = (
-        network_results["all_mae"] - median_mae
+            network_results["all_mae"] - median_mae
     ).abs()
 
     selected = network_results.sort_values(

@@ -5,9 +5,9 @@ This module contains the network-specific configuration for all benchmark networ
 from dataclasses import dataclass
 from typing import Optional
 
+
 @dataclass(frozen=True)
 class NetworkConfig:
-    name: str
     model_name: str
     scenario_stem: str
     surrogate_filename: str
@@ -20,7 +20,7 @@ class NetworkConfig:
         if split is None:
             return self.scenario_stem
 
-        if split not in {"train", "validation", "test"}:
+        if split not in {"training", "validation", "test"}:
             raise ValueError(f"Unknown scenario split: {split}")
 
         return f"{self.scenario_stem}_{split}"
@@ -89,7 +89,6 @@ class NetworkConfig:
 
 NETWORKS = {
     "hanoi": NetworkConfig(
-        name="hanoi",
         model_name="Hanoi",
         scenario_stem="control_cl_injection_scenario-Net1=False_randDemand=True",
         surrogate_filename="hanoi_randDemand=True_surrogate.pt",
@@ -99,7 +98,6 @@ NETWORKS = {
         injection_pattern_id="my-chl-injection",
     ),
     "net1": NetworkConfig(
-        name="net1",
         model_name="Net1",
         scenario_stem="control_cl_injection_scenario-Net1=True_randDemand=True",
         surrogate_filename="net1_randDemand=True_surrogate_multi5.pt",
@@ -109,7 +107,6 @@ NETWORKS = {
         injection_pattern_id="my-chl-injection",
     ),
     "cydbp": NetworkConfig(
-        name="cydbp",
         model_name="CY-DBP",
         scenario_stem="control_cl_injection_scenario-CYDBP_randDemand=True",
         surrogate_filename="cydbp_randDemand=True_surrogate.pt",

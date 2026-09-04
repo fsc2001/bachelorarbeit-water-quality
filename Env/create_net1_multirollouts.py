@@ -1,17 +1,20 @@
 """
 This module creates multiple Net1 training rollouts for surrogate model training.
 """
+
 import os
 import sys
 from pathlib import Path
-from create_data import create_data_set
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 REFERENCE_REPO = PROJECT_DIR / "NeuralSurrogateKalmanChlorineEstimation"
 os.chdir(REFERENCE_REPO)
 sys.path.insert(0, str(REFERENCE_REPO))
 
+from create_data import create_data_set
+
 ROLLOUTS = 5
+
 
 def main():
     for rollout_index in range(ROLLOUTS):

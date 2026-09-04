@@ -7,7 +7,7 @@ import json
 import random
 import sys
 from pathlib import Path
-
+from epyt_flow.simulation.scada import ScadaData
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 REFERENCE_REPO = PROJECT_DIR / "NeuralSurrogateKalmanChlorineEstimation"
@@ -16,9 +16,7 @@ RESULTS_DIR = PROJECT_DIR / "results"
 
 sys.path.insert(0, str(PROJECT_DIR))
 
-from epyt_flow.simulation.scada import ScadaData
 from Env.network_config import NETWORKS
-
 
 def create_random_placement(network_name, n_sensors, seed):
     network = NETWORKS[network_name]
@@ -34,8 +32,8 @@ def create_random_placement(network_name, n_sensors, seed):
     )
 
     scada_path = (
-        DATA_DIR
-        / f"{network_name}_randDemand=True_training.epytflow_scada_data"
+            DATA_DIR
+            / f"{network_name}_randDemand=True_training.epytflow_scada_data"
     )
 
     scada_data = ScadaData.load_from_file(str(scada_path))
@@ -66,11 +64,11 @@ def main():
     RESULTS_DIR.mkdir(exist_ok=True)
 
     random_selection_path = (
-        RESULTS_DIR / "selected_random_ppo_placements.json"
+            RESULTS_DIR / "selected_random_ppo_placements.json"
     )
 
     centrality_path = (
-        RESULTS_DIR / "centrality_sensor_placements.json"
+            RESULTS_DIR / "centrality_sensor_placements.json"
     )
 
     with random_selection_path.open("r", encoding="utf-8") as file:

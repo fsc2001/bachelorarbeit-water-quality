@@ -5,7 +5,7 @@ This module evaluates the surrogate model on validation and test data.
 import csv
 import sys
 from pathlib import Path
-import matplotlib.pyplot as plt
+
 import numpy as np
 from epyt_flow.simulation import ScadaData
 
@@ -24,9 +24,6 @@ from run_exp_state_estimation import get_state_transition_model
 
 NETWORK_NAME = "net1"
 RANDOMIZED_DEMANDS = True
-
-LOWER_BOUND = 0.3
-UPPER_BOUND = 2.0
 
 NETWORK = NETWORKS[NETWORK_NAME]
 N_CHLORINE = NETWORK.n_nodes + NETWORK.n_links
@@ -48,74 +45,6 @@ def print_metrics(name, metrics):
         f"RMSE={metrics['rmse']:.4f} mg/L"
     )
 
-def diagnose_predictions(
-    split: str,
-    true_nodes: np.ndarray,
-    predicted_nodes: np.ndarray,
-    true_links: np.ndarray,
-    predicted_links: np.ndarray,
-) -> None:
-
-    print("\n" + "-" * 70)
-    print(f"DIAGNOSTICS - {split.upper()}")
-    print("-" * 70)
-
-    print("Number of transitions:", true_nodes.shape[0])
-
-    def describe(name, values):
-        print(
-            f"{name}: "
-            f"min={values.min():.4f}, "
-            f"max={values.max():.4f}, "
-            f"mean={values.mean():.4f}, "
-            f"std={values.std():.4f}"
-        )
-
-    describe("True nodes     ", true_nodes)
-    describe("Predicted nodes", predicted_nodes)
-    describe("True links     ", true_links)
-    describe("Predicted links", predicted_links)
-
-    node_error = predicted_nodes - true_nodes
-
-    print(
-        "Node mean error / bias:",
-        float(np.mean(node_error)),
-    )
-
-    # Drei Nodes mit der größten zeitlichen Variation auswählen.
-    node_variance = np.var(true_nodes, axis=0)
-
-    selected_nodes = np.argsort(
-        node_variance
-    )[-3:]
-
-    n_plot_steps = min(
-        100,
-        true_nodes.shape[0],
-    )
-
-    for node_idx in selected_nodes:
-        plt.figure()
-
-        plt.plot(
-            true_nodes[:n_plot_steps, node_idx],
-            label="True",
-        )
-
-        plt.plot(
-            predicted_nodes[:n_plot_steps, node_idx],
-            label="Predicted",
-        )
-
-        plt.xlabel("Time step")
-        plt.ylabel("Chlorine concentration [mg/L]")
-        plt.title(
-            f"{split}: Node {node_idx}"
-        )
-        plt.legend()
-        plt.tight_layout()
-        plt.show()
 
 def evaluate_dataset(split):
     dataset_name = (
@@ -126,22 +55,25 @@ def evaluate_dataset(split):
     actions_path = DATA_DIR / f"{dataset_name}.npz"
     model_path = DATA_DIR / NETWORK.surrogate_filename
 
-    if not scada_path.exists():
-        raise FileNotFoundError(f"SCADA dataset not found: {scada_path}")
-
-    if not actions_path.exists():
-        raise FileNotFoundError(f"Action dataset not found: {actions_path}")
-
-    scada_data = ScadaData.load_from_file(str(scada_path))
+    scada_data = ScadaData.load_from_file(
+        str(scada_path)
+    )
 
     control_actions = np.load(
-        actions_path,
-        allow_pickle=False,
+        actions_path
     )["control_actions"]
 
-    node_quality = np.asarray(scada_data.get_data_nodes_quality())
-    link_quality = np.asarray(scada_data.get_data_links_quality())
-    flows = np.asarray(scada_data.get_data_flows())
+    node_quality = np.asarray(
+        scada_data.get_data_nodes_quality()
+    )
+
+    link_quality = np.asarray(
+        scada_data.get_data_links_quality()
+    )
+
+    flows = np.asarray(
+        scada_data.get_data_flows()
+    )
 
     current_states = np.concatenate(
         (
@@ -151,8 +83,6 @@ def evaluate_dataset(split):
         ),
         axis=1,
     )
-
-    control_actions = control_actions[:current_states.shape[0]]
 
     true_next_chlorine = np.concatenate(
         (
@@ -170,6 +100,10 @@ def evaluate_dataset(split):
         axis=1,
     )
 
+    control_actions = control_actions[
+        :current_states.shape[0]
+    ]
+
     model = get_state_transition_model(
         NETWORK.model_name,
         str(model_path),
@@ -186,13 +120,19 @@ def evaluate_dataset(split):
         axis=1,
     )
 
-    scaled_input = model._scaler.transform(model_input)
-    scaled_states = scaled_input[:, :current_states.shape[1]]
+    scaled_input = model._scaler.transform(
+        model_input
+    )
+
+    scaled_states = scaled_input[
+        :,
+        :current_states.shape[1],
+    ]
 
     scaled_controls = scaled_input[
-                      :,
-                      current_states.shape[1]:
-                      ]
+        :,
+        current_states.shape[1]:,
+    ]
 
     scaled_prediction = np.asarray(
         model.predict(
@@ -216,25 +156,14 @@ def evaluate_dataset(split):
 
     prediction = model._scaler.inverse_transform(
         prediction_with_controls
-    )[:, :current_states.shape[1]]
+    )
 
-    predicted_chlorine = prediction[:, :N_CHLORINE]
+    predicted_chlorine = prediction[
+        :,
+        :N_CHLORINE,
+    ]
 
     n_nodes = NETWORK.n_nodes
-
-    true_nodes = true_next_chlorine[:, :n_nodes]
-    true_links = true_next_chlorine[:, n_nodes:]
-
-    predicted_nodes = predicted_chlorine[:, :n_nodes]
-    predicted_links = predicted_chlorine[:, n_nodes:]
-
-    diagnose_predictions(
-        split,
-        true_nodes,
-        predicted_nodes,
-        true_links,
-        predicted_links,
-    )
 
     model_metrics = {
         "all": compute_metrics(
@@ -242,12 +171,12 @@ def evaluate_dataset(split):
             predicted_chlorine,
         ),
         "nodes": compute_metrics(
-            true_nodes,
-            predicted_nodes,
+            true_next_chlorine[:, :n_nodes],
+            predicted_chlorine[:, :n_nodes],
         ),
         "links": compute_metrics(
-            true_links,
-            predicted_links,
+            true_next_chlorine[:, n_nodes:],
+            predicted_chlorine[:, n_nodes:],
         ),
     }
 
@@ -266,24 +195,16 @@ def evaluate_dataset(split):
         ),
     }
 
-    control_mask = (
-        (true_next_chlorine >= LOWER_BOUND)
-        & (true_next_chlorine <= UPPER_BOUND)
-    )
-
-    control_metrics = compute_metrics(
-        true_next_chlorine[control_mask],
-        predicted_chlorine[control_mask],
-    )
-
     print(f"\n{NETWORK.model_name} surrogate - {split}")
     print_metrics("All states", model_metrics["all"])
     print_metrics("Nodes", model_metrics["nodes"])
     print_metrics("Links", model_metrics["links"])
-    print_metrics("Persistence baseline", persistence_metrics["all"])
-    print_metrics("Control-relevant range", control_metrics)
+    print_metrics(
+        "Persistence baseline",
+        persistence_metrics["all"],
+    )
 
-    return model_metrics, persistence_metrics, control_metrics
+    return model_metrics, persistence_metrics
 
 
 def main():
@@ -291,31 +212,8 @@ def main():
 
     rows = []
 
-    training_path = (
-            DATA_DIR
-            / f"{NETWORK_NAME}_randDemand={RANDOMIZED_DEMANDS}_training.epytflow_scada_data"
-    )
-
-    training_scada = ScadaData.load_from_file(
-        str(training_path)
-    )
-
-    training_steps = np.asarray(
-        training_scada.get_data_nodes_quality()
-    ).shape[0]
-
-    print(
-        "\nTraining time steps:",
-        training_steps,
-    )
-
-    print(
-        "Training transitions:",
-        training_steps - 1,
-    )
-
-    for split in ("training", "validation", "test"):
-        model_metrics, persistence_metrics, control_metrics = (
+    for split in ("validation", "test"):
+        model_metrics, persistence_metrics = (
             evaluate_dataset(split)
         )
 
@@ -340,23 +238,21 @@ def main():
                 }
             )
 
-        rows.append(
-            {
-                "network": NETWORK_NAME,
-                "split": split,
-                "model": "surrogate",
-                "scope": "control_range",
-                **control_metrics,
-            }
-        )
+    output_path = (
+        RESULTS_DIR
+        / f"{NETWORK_NAME}_surrogate_evaluation.csv"
+    )
 
-    output_path = RESULTS_DIR / f"{NETWORK_NAME}_surrogate_evaluation.csv"
-
-    with output_path.open("w", newline="", encoding="utf-8") as file:
+    with output_path.open(
+        "w",
+        newline="",
+        encoding="utf-8",
+    ) as file:
         writer = csv.DictWriter(
             file,
             fieldnames=rows[0].keys(),
         )
+
         writer.writeheader()
         writer.writerows(rows)
 

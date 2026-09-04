@@ -31,10 +31,8 @@ sys.path.insert(0, str(REFERENCE_REPO))
 from Env.chlorine_env import ChlorineControlEnv, create_network_scenario
 from Env.network_config import NETWORKS
 
-
 NETWORK_NAME = "cydbp"
 NETWORK = NETWORKS[NETWORK_NAME]
-
 RUN_NAME = "final_seeded_ppo_20000"
 TRAINING_SEEDS = [0, 1, 2, 3, 4]
 
@@ -112,18 +110,14 @@ def make_env(use_estimated_state, seed, placement_name):
 
         node_indices, link_indices = get_sensor_indices(placement_name)
 
-        n_sensors = 0 if node_indices is None else len(node_indices)
-
-        scenario_config, _ = create_network_scenario(
+        scenario_config = create_network_scenario(
             network_config=NETWORK,
-            n_sensors=n_sensors,
             uncertainty_seed=seed,
         )
 
         env = ChlorineControlEnv(
             scenario_config=scenario_config,
             network_config=NETWORK,
-            n_sensors=n_sensors,
             use_estimated_state=use_estimated_state,
             chlorine_penalty_weight=CHLORINE_PENALTY_WEIGHT,
             sensor_node_indices=node_indices,
@@ -171,19 +165,6 @@ def create_validation_env(use_estimated_state, seed, placement_name):
 
     return env
 
-
-def get_last_model_paths(variant_name, training_seed):
-    model_name = (
-        f"{NETWORK_NAME}_ppo_{variant_name}"
-        f"_seed{training_seed}_{RUN_NAME}"
-    )
-
-    model_path = MODEL_DIR / model_name
-    normalization_path = MODEL_DIR / f"{model_name}_vecnormalize.pkl"
-
-    return model_path, normalization_path
-
-
 def get_best_model_paths(variant_name, training_seed):
     model_name = (
         f"{NETWORK_NAME}_ppo_{variant_name}"
@@ -201,14 +182,14 @@ def get_best_model_paths(variant_name, training_seed):
 
 class ValidationCallback(BaseCallback):
     def __init__(
-        self,
-        validation_env,
-        validation_seed,
-        eval_freq,
-        eval_steps,
-        save_dir,
-        chlorine_penalty_weight,
-        verbose=1,
+            self,
+            validation_env,
+            validation_seed,
+            eval_freq,
+            eval_steps,
+            save_dir,
+            chlorine_penalty_weight,
+            verbose=1,
     ):
         super().__init__(verbose=verbose)
 
@@ -334,8 +315,8 @@ class ValidationCallback(BaseCallback):
         mean_action = float(np.mean(actions))
 
         score = (
-            total_violation / self.eval_steps
-            + self.chlorine_penalty_weight * mean_action
+                total_violation / self.eval_steps
+                + self.chlorine_penalty_weight * mean_action
         )
 
         return {
@@ -344,16 +325,16 @@ class ValidationCallback(BaseCallback):
             "mean_action": mean_action,
             "cumulative_action": float(np.sum(actions)),
             "outside_range_fraction": (
-                lower_violation_count + upper_violation_count
-            ) / total_node_values,
+                                              lower_violation_count + upper_violation_count
+                                      ) / total_node_values,
             "lower_violation_fraction": (
-                lower_violation_count / total_node_values
+                    lower_violation_count / total_node_values
             ),
             "upper_violation_fraction": (
-                upper_violation_count / total_node_values
+                    upper_violation_count / total_node_values
             ),
             "mean_violation_per_node_value": (
-                total_violation / total_node_values
+                    total_violation / total_node_values
             ),
         }
 
@@ -433,16 +414,11 @@ class ValidationCallback(BaseCallback):
 
 
 def train_variant(
-    variant_name,
-    use_estimated_state,
-    placement_name,
-    training_seed,
-):
-    last_model_path, last_normalization_path = get_last_model_paths(
         variant_name,
+        use_estimated_state,
+        placement_name,
         training_seed,
-    )
-
+):
     (
         best_model_dir,
         best_model_path,
@@ -451,18 +427,14 @@ def train_variant(
         variant_name,
         training_seed,
     )
-
-    last_model_zip = Path(f"{last_model_path}.zip")
     best_model_zip = Path(f"{best_model_path}.zip")
 
-    all_files_exist = (
-        last_model_zip.exists()
-        and last_normalization_path.exists()
-        and best_model_zip.exists()
-        and best_normalization_path.exists()
+    best_files_exist = (
+            best_model_zip.exists()
+            and best_normalization_path.exists()
     )
 
-    if SKIP_EXISTING_MODELS and all_files_exist:
+    if SKIP_EXISTING_MODELS and best_files_exist:
         print(f"Skipping {variant_name}, seed {training_seed}")
         return best_model_path, best_normalization_path
 
@@ -514,9 +486,6 @@ def train_variant(
             progress_bar=False,
         )
 
-        model.save(str(last_model_path))
-        env.save(str(last_normalization_path))
-
     finally:
         env.close()
         validation_env.close()
@@ -535,12 +504,12 @@ def train_variant(
 
 
 def evaluate_variant(
-    variant_name,
-    use_estimated_state,
-    placement_name,
-    training_seed,
-    model_path,
-    normalization_path,
+        variant_name,
+        use_estimated_state,
+        placement_name,
+        training_seed,
+        model_path,
+        normalization_path,
 ):
     set_environment_seed(EVALUATION_SEED)
 
@@ -672,16 +641,16 @@ def evaluate_variant(
             "evaluation_seed": EVALUATION_SEED,
             "selected_training_timesteps": selected_training_timesteps,
             "outside_range_fraction": (
-                lower_violation_count + upper_violation_count
-            ) / total_node_values,
+                                              lower_violation_count + upper_violation_count
+                                      ) / total_node_values,
             "lower_violation_fraction": (
-                lower_violation_count / total_node_values
+                    lower_violation_count / total_node_values
             ),
             "upper_violation_fraction": (
-                upper_violation_count / total_node_values
+                    upper_violation_count / total_node_values
             ),
             "mean_violation_per_node_value": (
-                total_violation / total_node_values
+                    total_violation / total_node_values
             ),
             "cumulative_action": float(np.sum(actions)),
             "mean_reward": float(np.mean(rewards)),
@@ -696,20 +665,20 @@ def evaluate_variant(
                     "training_seed": training_seed,
                     "node_index": node_index,
                     "outside_range_fraction": (
-                        node_lower_counts[node_index]
-                        + node_upper_counts[node_index]
-                    ) / EVALUATION_STEPS,
+                                                      node_lower_counts[node_index]
+                                                      + node_upper_counts[node_index]
+                                              ) / EVALUATION_STEPS,
                     "lower_violation_fraction": (
-                        node_lower_counts[node_index]
-                        / EVALUATION_STEPS
+                            node_lower_counts[node_index]
+                            / EVALUATION_STEPS
                     ),
                     "upper_violation_fraction": (
-                        node_upper_counts[node_index]
-                        / EVALUATION_STEPS
+                            node_upper_counts[node_index]
+                            / EVALUATION_STEPS
                     ),
                     "mean_violation": (
-                        node_total_violation[node_index]
-                        / EVALUATION_STEPS
+                            node_total_violation[node_index]
+                            / EVALUATION_STEPS
                     ),
                 }
             )
@@ -771,8 +740,8 @@ def save_summary(results):
         rows.append(row)
 
     output_path = (
-        RESULTS_DIR
-        / f"{NETWORK_NAME}_ppo_{RUN_NAME}_summary.csv"
+            RESULTS_DIR
+            / f"{NETWORK_NAME}_ppo_{RUN_NAME}_summary.csv"
     )
 
     save_csv(rows, output_path)
@@ -833,13 +802,13 @@ def main():
             spatial_results.extend(node_results)
 
             raw_path = (
-                RESULTS_DIR
-                / f"{NETWORK_NAME}_ppo_{RUN_NAME}_raw.csv"
+                    RESULTS_DIR
+                    / f"{NETWORK_NAME}_ppo_{RUN_NAME}_raw.csv"
             )
 
             spatial_path = (
-                RESULTS_DIR
-                / f"{NETWORK_NAME}_ppo_{RUN_NAME}_spatial.csv"
+                    RESULTS_DIR
+                    / f"{NETWORK_NAME}_ppo_{RUN_NAME}_spatial.csv"
             )
 
             save_csv(results, raw_path)
