@@ -13,6 +13,3 @@ __pycache__/
 NeuralSurrogateKalmanChlorineEstimation/.git_reference_backup/
 
 *.npz
-
-*.zip
-*.pkl

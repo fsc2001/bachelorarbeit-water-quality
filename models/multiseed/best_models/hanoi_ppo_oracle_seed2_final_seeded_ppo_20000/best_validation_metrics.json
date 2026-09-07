@@ -1,0 +1,11 @@
+{
+  "training_timesteps": 20000,
+  "score": 0.08485612433115139,
+  "mean_reward": -0.08485612451191991,
+  "mean_action": 0.02454920021817088,
+  "cumulative_action": 12.27460010908544,
+  "outside_range_fraction": 0.0164375,
+  "lower_violation_fraction": 0.0164375,
+  "upper_violation_fraction": 0.0,
+  "mean_violation_per_node_value": 0.0026440822602803024
+}
